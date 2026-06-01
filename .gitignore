@@ -1,3 +1,8 @@
 /cmake-build-*/
 /files/
 /.idea/
+CLAUDE.md
+__pycache__/
+*.pyc
+.DS_Store
+sts_lightspeed/build/
