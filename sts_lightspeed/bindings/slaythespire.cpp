@@ -983,6 +983,10 @@ PYBIND11_MODULE(slaythespire, m) {
         .def_readwrite("cost_for_turn", &CardInstance::costForTurn)
         .def_readwrite("free_to_play_once", &CardInstance::freeToPlayOnce)
         .def_readwrite("retain", &CardInstance::retain)
+        // Per-instance accumulator used by Searing Blow (upgrade level), Rampage
+        // (bonus damage), Ritual Dagger (damage), Genetic Algorithm (block); 0 otherwise.
+        .def_readonly("special_data", &CardInstance::specialData)
+        .def("uses_special_data", &CardInstance::usesSpecialData)
         .def("is_free_to_play", &CardInstance::isFreeToPlay)
         .def("can_use_on_any_target", &CardInstance::canUseOnAnyTarget)
         .def("can_use", &CardInstance::canUse, pybind::arg("bc"), pybind::arg("target"), pybind::arg("in_autoplay") = false);
@@ -1190,6 +1194,30 @@ PYBIND11_MODULE(slaythespire, m) {
         // Battle actions
         .def("end_turn", &BattleContext::endTurn)
         .def("execute_actions", &BattleContext::executeActions)
+        // Re-seed the battle RNGs so a cloned context samples a fresh stochastic
+        // outcome (reshuffles, random card effects, monster AI). Does NOT reorder the
+        // current draw pile -- its order is part of state. Used by MCTS chance nodes.
+        .def("reseed", [](BattleContext &bc, std::uint64_t seed) {
+            bc.aiRng = sts::Random(seed);
+            bc.cardRandomRng = sts::Random(seed + 1);
+            bc.miscRng = sts::Random(seed + 2);
+            bc.monsterHpRng = sts::Random(seed + 3);
+            bc.potionRng = sts::Random(seed + 4);
+            bc.shuffleRng = sts::Random(seed + 5);
+        }, pybind::arg("seed"))
+        // Re-randomize the (hidden) draw-pile ORDER in place via Fisher-Yates. The
+        // draw pile's contents are known to the agent but its order is not, so MCTS
+        // determinizes it with the search RNG before sampling a draw -- this is what
+        // de-privileges "which cards get drawn". A pure reorder; pile contents/counts
+        // are untouched.
+        .def("shuffle_draw_pile", [](BattleContext &bc, std::uint64_t seed) {
+            auto &dp = bc.cards.drawPile;
+            sts::Random r(seed);
+            for (int i = static_cast<int>(dp.size()) - 1; i > 0; --i) {
+                int j = r.random(i);   // [0, i] inclusive
+                std::swap(dp[i], dp[j]);
+            }
+        }, pybind::arg("seed"))
         .def("drink_potion", &BattleContext::drinkPotion, pybind::arg("idx"), pybind::arg("target") = 0)
         .def("discard_potion", &BattleContext::discardPotion)
         .def("is_card_play_allowed", &BattleContext::isCardPlayAllowed)
@@ -1205,6 +1233,13 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("choose_headbutt_card", &BattleContext::chooseHeadbuttCard)
         .def("choose_recycle_card", &BattleContext::chooseRecycleCard)
         .def("choose_warcry_card", &BattleContext::chooseWarcryCard)
+        // Initialize from GameContext
+        .def("init", static_cast<void (BattleContext::*)(const GameContext&)>(&BattleContext::init),
+             "Initialize battle context from game context")
+        .def("init_with_encounter", static_cast<void (BattleContext::*)(const GameContext&, MonsterEncounter)>(&BattleContext::init),
+             "Initialize battle context with specific encounter")
+        .def("exit_battle", &BattleContext::exitBattle,
+             "Exit battle and update game context")
         .def("__repr__", [](const BattleContext &bc) {
             std::ostringstream oss;
             oss << bc;
