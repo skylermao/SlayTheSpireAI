@@ -121,6 +121,31 @@ def resolve_potion(spec: Union[str, "sts.Potion"]) -> Optional["sts.Potion"]:
 
 
 # =============================================================================
+# Potion pool (for randomly equipping potions on dataset combats)
+# =============================================================================
+# Each character has three class-locked potions; an Ironclad can only ever hold
+# its own three plus the class-agnostic (common/uncommon/rare) potions. Drop the
+# other three classes' exclusives, plus the INVALID / empty-slot sentinels.
+_NON_IRONCLAD_POTIONS = {
+    "POISON_POTION", "CUNNING_POTION", "GHOST_IN_A_JAR",          # Silent
+    "FOCUS_POTION", "POTION_OF_CAPACITY", "ESSENCE_OF_DARKNESS",  # Defect
+    "BOTTLED_MIRACLE", "STANCE_POTION", "AMBROSIA",               # Watcher
+}
+
+
+def _ironclad_potion_pool() -> list:
+    pool = []
+    for name, pot in sts.Potion.__members__.items():
+        if name in ("INVALID", "EMPTY_POTION_SLOT") or name in _NON_IRONCLAD_POTIONS:
+            continue
+        pool.append(pot)
+    return pool
+
+
+IRONCLAD_POTION_POOL = _ironclad_potion_pool()
+
+
+# =============================================================================
 # Configuration dataclasses
 # =============================================================================
 
@@ -154,14 +179,29 @@ class RewardConfig:
 # =============================================================================
 
 class DatasetSampler:
-    """Samples `CombatConfig`s from extracted fight data (data/*.json.gz)."""
+    """Samples `CombatConfig`s from extracted fight data (data/*.json.gz).
+
+    Each fight record carries the deck, relics, enemy, and entering HP for one combat
+    of a real run; `sample()` turns one into a `CombatConfig`. The source data has no
+    potions, so potions are drawn here: by default 80% no potion, 15% one, 5% two, each
+    chosen uniformly at random from the Ironclad-legal pool (`IRONCLAD_POTION_POOL`).
+
+    Validation: the fight set is large (the Ironclad-wins file is ~1.8M combats), so by
+    default mappability is checked lazily -- `sample()` resamples until it hits a fight
+    whose deck/relics/enemy all resolve -- instead of filtering the whole list up front.
+    Pass `require_mappable=True` to eagerly filter (slow, but yields a clean fixed set).
+    """
 
     def __init__(self, fights: list[dict], rng: Optional[random.Random] = None,
-                 require_mappable: bool = True):
+                 require_mappable: bool = False,
+                 potion_distribution: "tuple[float, float, float]" = (0.80, 0.15, 0.05),
+                 potion_pool: Optional[list] = None):
         self.rng = rng or random.Random()
-        self.fights = [f for f in fights if not require_mappable or self._mappable(f)]
+        self.fights = [f for f in fights if self._mappable(f)] if require_mappable else fights
         if not self.fights:
-            raise ValueError("DatasetSampler: no mappable fights after filtering")
+            raise ValueError("DatasetSampler: no fights")
+        self.potion_distribution = potion_distribution
+        self.potion_pool = potion_pool if potion_pool is not None else IRONCLAD_POTION_POOL
 
     @classmethod
     def from_gzip(cls, path: str, **kw) -> "DatasetSampler":
@@ -185,14 +225,29 @@ class DatasetSampler:
             return False
         return True
 
+    def _sample_potions(self) -> list:
+        """Roll a potion count from `potion_distribution`, then draw that many at random
+        (with replacement -- duplicates are legal to hold) from the Ironclad pool."""
+        r = self.rng.random()
+        p0, p1, _ = self.potion_distribution
+        n = 0 if r < p0 else (1 if r < p0 + p1 else 2)
+        return [self.rng.choice(self.potion_pool) for _ in range(n)]
+
     def sample(self) -> CombatConfig:
-        f = self.rng.choice(self.fights)
+        # Lazy mappability: resample past any fight whose deck/relics/enemy don't resolve.
+        for _ in range(64):
+            f = self.rng.choice(self.fights)
+            if self._mappable(f):
+                break
+        else:
+            raise RuntimeError("DatasetSampler: no mappable fight found in 64 tries")
         return CombatConfig(
             deck=list(f["cards"]),
             relics=list(f["relics"]),
             max_hp=int(f["max_hp"]),
             cur_hp=int(f["entering_hp"]),
             encounter=f["enemies"],
+            potions=self._sample_potions(),
             ascension=int(f.get("ascension", 0)),
             human_hp_loss=f.get("damage_taken"),
         )

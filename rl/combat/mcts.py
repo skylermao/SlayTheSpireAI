@@ -38,7 +38,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from .session import CombatSession, LegalAction
+from .session import CombatSession, LegalAction, SELECT_CARD, SKIP_SELECT
 from . import encoding as enc
 
 
@@ -196,7 +196,15 @@ class MCTS:
         widen = len(chance.outcomes) < self.cfg.pw_k * ((chance.N + 1) ** self.cfg.pw_alpha)
         if widen or not chance.outcomes:
             child = parent.clone()
-            child.determinize(self.rng.getrandbits(63))   # independent search RNG
+            seed = self.rng.getrandbits(63)              # independent search RNG
+            # A card-select action references a *specific pile position* (e.g. Secret
+            # Weapon picks the Attack at a given draw-pile index). Reshuffling the draw
+            # pile would invalidate that index, so reseed only -- selects don't draw, and
+            # the draw order is re-randomized at the next normal (drawing) action anyway.
+            if action.kind in (SELECT_CARD, SKIP_SELECT):
+                child.reseed(seed)
+            else:
+                child.determinize(seed)
             child.step(action)
             sig = child.state_signature()
             existing = chance.outcomes.get(sig)
