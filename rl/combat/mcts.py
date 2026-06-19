@@ -57,6 +57,10 @@ class MCTSConfig:
     temperature: float = 1.0   # move selection from root visit counts (<=1e-3 -> greedy)
     discount: float = 1.0
     win_value_floor: float = 0.2   # win value = floor + (1-floor)*hp_frac
+    # Loss value scales with combat difficulty (how much of the entering HP the real
+    # player lost): an easy combat punishes a loss fully, a brutal one only mildly.
+    loss_value_easy: float = -1.0  # loss value when the human lost ~no HP (easy fight)
+    loss_value_hard: float = -0.3  # loss value when the human nearly died (hardest fight)
     add_root_noise: bool = True   # Dirichlet exploration at the root (off for eval)
     seed: Optional[int] = None
 
@@ -233,12 +237,25 @@ class MCTS:
         return best_i
 
     def _terminal_value(self, session: CombatSession) -> float:
-        """Value of a *decided* combat: win -> floor + (1-floor)*hp_frac, death -> -1."""
+        """Value of a *decided* combat: win -> floor + (1-floor)*hp_frac, loss ->
+        difficulty-scaled penalty (harder real fight -> milder punishment)."""
         if session.won:
             hp = max(0, session.bc.player.cur_hp) / max(1, session.cfg.max_hp)
             f = self.cfg.win_value_floor
             return f + (1.0 - f) * hp
-        return -1.0
+        return self._loss_value(session)
+
+    def _loss_value(self, session: CombatSession) -> float:
+        """Loss penalty interpolated by combat difficulty = fraction of the entering HP
+        the real (winning) player lost. No dataset info -> full (easy) punishment."""
+        cfg = session.cfg
+        hl = cfg.human_hp_loss if cfg is not None else None
+        le, lh = self.cfg.loss_value_easy, self.cfg.loss_value_hard
+        if hl is None:
+            return le
+        start_hp = max(1, session._start_cur_hp)
+        difficulty = min(1.0, max(0.0, float(hl) / start_hp))
+        return le + (lh - le) * difficulty
 
     def _game_value(self, session: CombatSession) -> float:
         """Self-play value target z for a finished game (neutral 0 if only truncated)."""
