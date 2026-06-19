@@ -1091,6 +1091,9 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("is_dead_or_escaped", &Monster::isDeadOrEscaped)
         .def("is_half_dead", &Monster::isHalfDead)
         .def("is_attacking", &Monster::isAttacking)
+        .def("get_move_id", [](const Monster &m) {   // current intent's move (0 = INVALID/none)
+            return static_cast<int>(m.moveHistory[0]);
+        })
         .def("has_status", &Monster::hasStatusInternal)
         .def("get_status", &Monster::getStatusInternal)
         .def("get_move_damage", [](const Monster &m, const BattleContext &bc) {

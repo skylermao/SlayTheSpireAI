@@ -50,7 +50,7 @@ def _mlp(sizes, act=nn.ReLU, norm=True):
 
 class CombatNet(nn.Module):
     def __init__(self, d_model: int = 128, d_card: int = 32, d_kind: int = 16,
-                 d_potion: int = 16, logit_scale: float = 10.0):
+                 d_potion: int = 16, d_move: int = 16, logit_scale: float = 10.0):
         super().__init__()
         self.d_model = d_model
         self.logit_scale = logit_scale   # hard cap on |policy logit| -> CE can't explode
@@ -67,8 +67,9 @@ class CombatNet(nn.Module):
         self.task_embed = nn.Embedding(enc.NUM_SELECT_TASKS + 1, d_kind)  # +1 = "not selecting"
         self.task_proj = _mlp([d_kind, d_model])
 
+        self.move_embed = nn.Embedding(enc.NUM_MONSTER_MOVES, d_move)  # intent move id
         self.player_proj = _mlp([enc.PLAYER_DIM, d_model, d_model])
-        self.monster_proj = _mlp([enc.MONSTER_DIM, d_model, d_model])
+        self.monster_proj = _mlp([enc.MONSTER_DIM + d_move, d_model, d_model])
         self.scalar_proj = _mlp([enc.SCALAR_DIM, d_model])
         self.pile_proj = _mlp([d_card * 3, d_model])
 
@@ -95,7 +96,9 @@ class CombatNet(nn.Module):
         hmask = t["hand_mask"].unsqueeze(-1)
         hand_pool = (hand * hmask).sum(1) / hmask.sum(1).clamp(min=1)
 
-        mon = self.monster_proj(t["monsters"])                     # (B,M,d)
+        move_idx = t["monster_moves"].long().clamp(0, enc.NUM_MONSTER_MOVES - 1)
+        move_emb = self.move_embed(move_idx)                       # (B,M,d_move)
+        mon = self.monster_proj(torch.cat([t["monsters"], move_emb], dim=-1))  # (B,M,d)
         mmask = t["monster_mask"].unsqueeze(-1)
         mon_pool = (mon * mmask).sum(1) / mmask.sum(1).clamp(min=1)
 

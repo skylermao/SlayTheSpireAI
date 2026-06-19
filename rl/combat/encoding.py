@@ -93,6 +93,11 @@ PLAYER_BASE_DIM = 16
 PLAYER_DIM = PLAYER_BASE_DIM + len(PLAYER_STATUSES)
 MONSTER_BASE_DIM = 8  # cur_hp, max_hp, block, intent_dmg, intent_hits, attacking, alive, targetable
 MONSTER_DIM = MONSTER_BASE_DIM + len(MONSTER_STATUSES)
+# Current intent's move id (MonsterMoveId), embedded by the net so it can read intent
+# *type* (attack vs defend vs buff vs debuff), not just damage. The enum is contiguous
+# 0..195 (INVALID=0) and not exposed to Python, so the size comes from the C++ header
+# (constants/MonsterMoves.h); the net clamps, so a larger enum degrades gracefully.
+NUM_MONSTER_MOVES = 196
 SCALAR_DIM = 5  # turn, is_card_select, can_skip_select, num_potions, num_alive_enemies
 
 _CARD_TYPE_INT = {
@@ -264,6 +269,7 @@ def empty_observation() -> dict:
         "player": np.zeros(PLAYER_DIM, np.float32),
         "monsters": np.zeros((MAX_ENEMIES, MONSTER_DIM), np.float32),
         "monster_mask": np.zeros(MAX_ENEMIES, np.int8),
+        "monster_moves": np.zeros(MAX_ENEMIES, np.float32),   # current move id per enemy
         "potions": np.zeros(NUM_POTIONS, np.float32),
         "relics": np.zeros(NUM_RELICS, np.float32),
         "select_task": np.array([SELECT_TASK_NONE], np.float32),
@@ -354,6 +360,10 @@ def encode_observation(bc, relic_vec=None) -> dict:
         except Exception:
             pass
         obs["monsters"][i, 5] = 1.0 if mon.is_attacking() else 0.0
+        try:
+            obs["monster_moves"][i] = mon.get_move_id()   # intent move (embedded in net)
+        except Exception:
+            pass
         alive = mon.is_alive()
         obs["monsters"][i, 6] = 1.0 if alive else 0.0
         obs["monsters"][i, 7] = 1.0 if mon.is_targetable() else 0.0
