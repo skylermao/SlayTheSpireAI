@@ -80,6 +80,21 @@ _ENCOUNTER_NAME_OVERRIDES = {
 }
 
 
+# Encounter difficulty tiers (names exactly as they appear in the fight data "enemies").
+# Note: "Blue Slaver"/"Red Slaver" are A1 normal single-slaver fights and are kept; the
+# A2 elite trio "Slavers" is excluded.
+BOSS_ENCOUNTERS = {
+    "The Guardian", "Hexaghost", "Slime Boss", "Automaton", "Collector", "Champ",
+    "Awakened One", "Time Eater", "Donu and Deca", "The Heart",
+}
+ELITE_ENCOUNTERS = {
+    "Gremlin Nob", "Lagavulin", "Lagavulin Event", "3 Sentries", "Gremlin Leader",
+    "Slavers", "Book of Stabbing", "Giant Head", "Nemesis", "Reptomancer",
+    "Shield and Spear",
+}
+NON_NORMAL_ENCOUNTERS = BOSS_ENCOUNTERS | ELITE_ENCOUNTERS
+
+
 def _enum_from(name: str, enum_cls, overrides: dict):
     key = overrides.get(name, name.upper().replace(" ", "_").replace("'", "").replace("-", "_"))
     return getattr(enum_cls, key, None)
