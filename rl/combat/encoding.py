@@ -51,6 +51,7 @@ _BLOCK_NORM = 50.0
 _ENERGY_NORM = 10.0
 _DMG_NORM = 50.0
 _STACK_NORM = 20.0
+_COUNT_NORM = 10.0   # per-turn play counts and relic counters are small integers
 
 # Curated status sets: the buffs/debuffs that matter for Ironclad combat. Order is
 # fixed and defines the observation layout.
@@ -84,7 +85,11 @@ MONSTER_STATUSES = [
     sts.MonsterStatus.MARK, sts.MonsterStatus.SHACKLED, sts.MonsterStatus.CORPSE_EXPLOSION,
 ]
 
-PLAYER_BASE_DIM = 5  # cur_hp, max_hp, block, energy, energy_per_turn
+# cur_hp, max_hp, block, energy, energy_per_turn,
+# + per-turn play counts (cards/attacks/skills played, cards discarded),
+# + persistent relic counters (happy_flower, incense_burner, ink_bottle, inserter,
+#   nunchaku, pen_nib, sundial) -- progress toward each counter relic's next trigger.
+PLAYER_BASE_DIM = 16
 PLAYER_DIM = PLAYER_BASE_DIM + len(PLAYER_STATUSES)
 MONSTER_BASE_DIM = 8  # cur_hp, max_hp, block, intent_dmg, intent_hits, attacking, alive, targetable
 MONSTER_DIM = MONSTER_BASE_DIM + len(MONSTER_STATUSES)
@@ -140,6 +145,41 @@ def index_for_card_id(card_id: int) -> int:
     """Dense embedding/pile index for a raw CardId int (UNKNOWN if out of set)."""
     cid = int(card_id)
     return int(CARD_INDEX_LUT[cid]) if 0 <= cid <= _MAX_RAW_CARD_ID else UNKNOWN_CARD_INDEX
+
+
+# =============================================================================
+# Relic identity space + card-select task
+# =============================================================================
+# Relics are static for a combat, so the observation carries a multi-hot presence
+# vector over a dense relic index (the BattleContext doesn't expose a relic list, so
+# the session builds this once at reset from its known relics). This lets the net
+# condition play on relic synergies (Pen Nib, Kunai, Velvet Choker, Snecko Eye, ...).
+
+def _build_relic_index():
+    allowed = [r for n, r in sts.RelicId.__members__.items() if n != "INVALID"]
+    allowed.sort(key=lambda r: int(r))
+    return allowed, {int(r): i for i, r in enumerate(allowed)}
+
+
+ALLOWED_RELIC_IDS, RELIC_ID_TO_INDEX = _build_relic_index()
+NUM_RELICS = len(ALLOWED_RELIC_IDS)
+
+
+def relic_vector(relic_id_ints) -> np.ndarray:
+    """Multi-hot presence vector over the relic index for a list of raw RelicId ints."""
+    v = np.zeros(NUM_RELICS, np.float32)
+    for rid in relic_id_ints:
+        i = RELIC_ID_TO_INDEX.get(int(rid))
+        if i is not None:
+            v[i] = 1.0
+    return v
+
+
+# Card-select task id (which select the agent is making: ARMAMENTS upgrade vs
+# EXHAUST_ONE vs WARCRY top-of-draw, ...). Encoded so the net knows whether to pick a
+# good or bad card. Tasks are 0..NUM_SELECT_TASKS-1; SELECT_TASK_NONE marks "not selecting".
+NUM_SELECT_TASKS = max(int(v) for v in sts.CardSelectTask.__members__.values()) + 1
+SELECT_TASK_NONE = NUM_SELECT_TASKS
 
 
 # =============================================================================
@@ -225,6 +265,8 @@ def empty_observation() -> dict:
         "monsters": np.zeros((MAX_ENEMIES, MONSTER_DIM), np.float32),
         "monster_mask": np.zeros(MAX_ENEMIES, np.int8),
         "potions": np.zeros(NUM_POTIONS, np.float32),
+        "relics": np.zeros(NUM_RELICS, np.float32),
+        "select_task": np.array([SELECT_TASK_NONE], np.float32),
         "scalars": np.zeros(SCALAR_DIM, np.float32),
     }
 
@@ -246,11 +288,12 @@ def select_candidate_features(bc, select_actions) -> np.ndarray:
     return feats
 
 
-def encode_observation(bc) -> dict:
+def encode_observation(bc, relic_vec=None) -> dict:
     """Encode a (possibly hypothetical) BattleContext into observation arrays.
 
     This is the fixed-shape board state only. CARD_SELECT candidates are NOT here --
-    see `select_candidate_features()` for the variable-length candidate set.
+    see `select_candidate_features()` for the variable-length candidate set. `relic_vec`
+    is the combat's static relic multi-hot (the session supplies it; bc has no list).
     """
     obs = empty_observation()
 
@@ -275,6 +318,19 @@ def encode_observation(bc) -> dict:
     obs["player"][2] = p.block / _BLOCK_NORM
     obs["player"][3] = p.energy / _ENERGY_NORM
     obs["player"][4] = p.energy_per_turn / _ENERGY_NORM
+    # per-turn play counts (drive Velvet Choker / Kunai / Shuriken / per-turn relics)
+    obs["player"][5] = p.cards_played_this_turn / _COUNT_NORM
+    obs["player"][6] = p.attacks_played_this_turn / _COUNT_NORM
+    obs["player"][7] = p.skills_played_this_turn / _COUNT_NORM
+    obs["player"][8] = p.cards_discarded_this_turn / _COUNT_NORM
+    # persistent relic counters (progress toward Pen Nib / Nunchaku / Ink Bottle / etc.)
+    obs["player"][9] = p.happy_flower_counter / _COUNT_NORM
+    obs["player"][10] = p.incense_burner_counter / _COUNT_NORM
+    obs["player"][11] = p.ink_bottle_counter / _COUNT_NORM
+    obs["player"][12] = p.inserter_counter / _COUNT_NORM
+    obs["player"][13] = p.nunchaku_counter / _COUNT_NORM
+    obs["player"][14] = p.pen_nib_counter / _COUNT_NORM
+    obs["player"][15] = p.sundial_counter / _COUNT_NORM
     idx = PLAYER_BASE_DIM
     for status in PLAYER_STATUSES:
         try:
@@ -329,4 +385,9 @@ def encode_observation(bc) -> dict:
     obs["scalars"][2] = 1.0 if (selecting and bc.card_select_info.can_pick_zero) else 0.0
     obs["scalars"][3] = bc.potion_count / float(MAX_POTIONS)
     obs["scalars"][4] = bc.monsters.get_alive_count() / float(MAX_ENEMIES)
+
+    if relic_vec is not None:
+        obs["relics"] = relic_vec
+    obs["select_task"][0] = float(int(bc.card_select_info.card_select_task)
+                                  if selecting else SELECT_TASK_NONE)
     return obs

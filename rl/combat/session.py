@@ -99,6 +99,7 @@ class CombatSession:
         self._select_actions: list = []   # cached enumerate during CARD_SELECT
         self._seed_counter = 0
         self._start_cur_hp = 0
+        self._relic_vec = None             # static relic multi-hot for the live combat
         self.cfg: Optional[CombatConfig] = None   # the config of the live combat
 
     # ========================================================================
@@ -134,12 +135,15 @@ class CombatSession:
             gc.obtain_card(card)
 
         # Relics first (pickup effects fire), then potions.
+        relic_ids = []
         for spec in cfg.relics:
             relic_id = resolve_relic(spec)
             if relic_id is None:
                 raise ValueError(f"Unmappable relic: {spec!r}")
+            relic_ids.append(int(relic_id))
             if not gc.has_relic(relic_id):
                 gc.obtain_relic(relic_id)
+        self._relic_vec = enc.relic_vector(relic_ids)   # static for the combat
         for spec in cfg.potions:
             potion = resolve_potion(spec)
             if potion is not None and potion != sts.Potion.EMPTY_POTION_SLOT:
@@ -222,7 +226,7 @@ class CombatSession:
 
     def observe(self) -> dict:
         """Read-only encode of the fixed-shape board state into observation tensors."""
-        return enc.encode_observation(self.bc)
+        return enc.encode_observation(self.bc, self._relic_vec)
 
     def select_candidate_features(self) -> "np.ndarray":
         """Variable-length (n_candidates, CARD_FEATURES) for the pending CARD_SELECT.
@@ -421,6 +425,7 @@ class CombatSession:
         new.max_turns = self.max_turns
         new._seed_counter = self._seed_counter
         new._start_cur_hp = self._start_cur_hp
+        new._relic_vec = self._relic_vec      # static; safe to share (read-only)
         new.cfg = self.cfg
         new.gc = None  # not needed once combat is running
         new.bc = sts.BattleContext(self.bc)

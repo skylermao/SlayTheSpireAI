@@ -65,6 +65,8 @@ class ParallelConfig:
     log_every: int = 100             # log a line every N grad steps
     checkpoint_every: int = 2_000    # save a checkpoint every N grad steps
     device: str = "cpu"              # learner + actor device (CPU on a c7i box)
+    tensorboard: bool = False        # also log scalars to TensorBoard
+    tb_logdir: Optional[str] = None  # defaults to <checkpoint_dir>/tb
 
 
 # =============================================================================
@@ -142,7 +144,8 @@ class ParallelTrainer:
                  train_config: Optional[TrainConfig] = None,
                  mcts_config: Optional[MCTSConfig] = None,
                  parallel_config: Optional[ParallelConfig] = None,
-                 net_kwargs: Optional[dict] = None, seed: int = 0):
+                 net_kwargs: Optional[dict] = None, seed: int = 0,
+                 resume_from: Optional[str] = None):
         if data_path is None and config is None:
             raise ValueError("Provide data_path (fights gzip) and/or a CombatConfig")
         self.tcfg = train_config or TrainConfig()
@@ -169,6 +172,11 @@ class ParallelTrainer:
         self.trainer = Trainer(config=config, sampler=learner_sampler,
                                train_config=self.tcfg, mcts_config=self.mcfg,
                                net=CombatNet(**self.net_kwargs), device=self.pcfg.device)
+        if resume_from is not None:
+            self.trainer.load(resume_from)              # net + optimizer state
+            for g in self.trainer.opt.param_groups:     # loading opt restores old lr; re-assert ours
+                g["lr"] = self.tcfg.lr
+            print(f"[parallel] resumed from {resume_from} (lr={self.tcfg.lr})", flush=True)
         os.makedirs(self.tcfg.checkpoint_dir, exist_ok=True)
         self.weights_path = os.path.join(self.tcfg.checkpoint_dir, "actor_weights.pt")
 
@@ -188,11 +196,17 @@ class ParallelTrainer:
         self.trainer.net.train()
         batch = random.sample(self.trainer.buffer, self.tcfg.batch_size)
         loss, p, v = self.trainer._loss(batch)
+        if not torch.isfinite(loss):                        # backstop against a bad batch
+            self.trainer.opt.zero_grad(set_to_none=True)
+            return float(p), float(v), True
         self.trainer.opt.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.trainer.net.parameters(), self.tcfg.grad_clip)
+        gnorm = torch.nn.utils.clip_grad_norm_(self.trainer.net.parameters(), self.tcfg.grad_clip)
+        if not torch.isfinite(gnorm):                       # don't apply a non-finite update
+            self.trainer.opt.zero_grad(set_to_none=True)
+            return float(p), float(v), True
         self.trainer.opt.step()
-        return float(p), float(v)
+        return float(p), float(v), False
 
     # ----- main loop --------------------------------------------------------
 
@@ -205,6 +219,13 @@ class ParallelTrainer:
 
         self.trainer.net.eval()
         self._push_weights()                        # publish initial weights (version 1)
+
+        writer = None
+        if self.pcfg.tensorboard:
+            from torch.utils.tensorboard import SummaryWriter
+            logdir = self.pcfg.tb_logdir or os.path.join(self.tcfg.checkpoint_dir, "tb")
+            writer = SummaryWriter(logdir)
+            print(f"[parallel] tensorboard logdir: {logdir}", flush=True)
 
         actor_mcfg = replace(self.mcfg, seed=None)  # per-actor seed set inside the worker
         actors = []
@@ -219,7 +240,8 @@ class ParallelTrainer:
         print(f"[parallel] {self.pcfg.num_actors} actors x {self.pcfg.actor_concurrency} "
               f"games (start={method}, device={self.pcfg.device})", flush=True)
 
-        steps = ex_seen = games_seen = wins = hp_sum = moves_sum = 0
+        steps = ex_seen = games_seen = wins = hp_sum = moves_sum = skips = 0
+        prev_games = prev_wins = 0
         t0 = last = time.time()
         try:
             while steps < self.pcfg.total_steps:
@@ -239,8 +261,9 @@ class ParallelTrainer:
                     time.sleep(0.05)
                     continue
 
-                p, v = self._train_step()
+                p, v, skipped = self._train_step()
                 steps += 1
+                skips += int(skipped)
                 if steps % self.pcfg.weight_sync_steps == 0:
                     self._push_weights()
                 if steps % self.pcfg.log_every == 0:
@@ -248,9 +271,21 @@ class ParallelTrainer:
                     sps = self.pcfg.log_every / max(1e-9, now - last)
                     gps = games_seen / max(1e-9, now - t0)
                     wr = wins / max(1, games_seen)
+                    iwr = (wins - prev_wins) / max(1, games_seen - prev_games)  # recent window
                     print(f"step {steps:6d} | {sps:5.1f} steps/s | self-play {gps:5.2f} games/s "
                           f"winrate {wr:.2f} | buf {len(self.trainer.buffer)} ex {ex_seen} "
-                          f"| ploss {p:.3f} vloss {v:.3f}", flush=True)
+                          f"| ploss {p:.3f} vloss {v:.3f} skips {skips}", flush=True)
+                    if writer is not None:
+                        writer.add_scalar("train/skipped_steps", skips, steps)
+                        writer.add_scalar("loss/policy", p, steps)
+                        writer.add_scalar("loss/value", v, steps)
+                        writer.add_scalar("winrate/cumulative", wr, steps)
+                        writer.add_scalar("winrate/recent", iwr, steps)
+                        writer.add_scalar("throughput/games_per_s", gps, steps)
+                        writer.add_scalar("throughput/steps_per_s", sps, steps)
+                        writer.add_scalar("buffer/size", len(self.trainer.buffer), steps)
+                        writer.add_scalar("games/total", games_seen, steps)
+                    prev_games, prev_wins = games_seen, wins
                     last = now
                 if steps % self.pcfg.checkpoint_every == 0:
                     self.trainer.save(os.path.join(self.tcfg.checkpoint_dir, f"net_step{steps}.pt"))
@@ -270,6 +305,8 @@ class ParallelTrainer:
                 if p.is_alive():
                     p.terminate()
             self.trainer.save(os.path.join(self.tcfg.checkpoint_dir, "net_final.pt"))
+            if writer is not None:
+                writer.close()
             print(f"[parallel] done: {steps} steps, {games_seen} games, "
                   f"{time.time() - t0:.0f}s", flush=True)
 

@@ -39,6 +39,7 @@ class TrainConfig:
     weight_decay: float = 1e-4
     value_loss_coef: float = 1.0
     grad_clip: float = 1.0
+    policy_target_smoothing: float = 0.03   # floor each policy target with uniform eps
     eval_every: int = 5
     eval_games: int = 20
     checkpoint_dir: str = "checkpoints"
@@ -104,9 +105,14 @@ class Trainer:
         z = torch.tensor([e.z for e in examples], dtype=torch.float32, device=self.device)
         value_loss = F.mse_loss(values, z)
 
+        eps = self.tcfg.policy_target_smoothing
         policy_loss = values.new_zeros(())
         for logits, e in zip(logits_list, examples):
             pi = torch.as_tensor(e.policy, dtype=torch.float32, device=self.device)
+            if eps > 0 and pi.numel() > 0:
+                # Floor the target away from one-hot so CE has a finite optimum and
+                # cannot push logits toward infinity (the runaway that diverged training).
+                pi = (1 - eps) * pi + eps / pi.numel()
             policy_loss = policy_loss - (pi * F.log_softmax(logits, dim=-1)).sum()
         policy_loss = policy_loss / len(examples)
 

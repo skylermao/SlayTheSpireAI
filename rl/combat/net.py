@@ -35,20 +35,25 @@ _KIND_IDX = {END_TURN: 0, PLAY_CARD: 1, USE_POTION: 2, SELECT_CARD: 3, SKIP_SELE
 _NUM_KINDS = len(_KIND_IDX)
 
 
-def _mlp(sizes, act=nn.ReLU):
+def _mlp(sizes, act=nn.ReLU, norm=True):
+    """MLP with LayerNorm on hidden layers (bounds activation scale -> training
+    stability). The final layer is left unnormalized so heads can output raw logits."""
     layers = []
     for i in range(len(sizes) - 1):
         layers.append(nn.Linear(sizes[i], sizes[i + 1]))
         if i < len(sizes) - 2:
+            if norm:
+                layers.append(nn.LayerNorm(sizes[i + 1]))
             layers.append(act())
     return nn.Sequential(*layers)
 
 
 class CombatNet(nn.Module):
     def __init__(self, d_model: int = 128, d_card: int = 32, d_kind: int = 16,
-                 d_potion: int = 16):
+                 d_potion: int = 16, logit_scale: float = 10.0):
         super().__init__()
         self.d_model = d_model
+        self.logit_scale = logit_scale   # hard cap on |policy logit| -> CE can't explode
 
         self.card_embed = nn.Embedding(enc.NUM_CARDS, d_card)
         self.card_proj = _mlp([d_card + (enc.CARD_FEATURES - 1), d_model, d_model])
@@ -57,13 +62,18 @@ class CombatNet(nn.Module):
         self.potion_state_proj = _mlp([d_potion, d_model])   # held-potion count vector
         self.potion_item_proj = _mlp([d_potion, d_model])    # single potion for an action
 
+        self.relic_embed = nn.Embedding(enc.NUM_RELICS, d_potion)  # relic presence (multi-hot)
+        self.relic_proj = _mlp([d_potion, d_model])
+        self.task_embed = nn.Embedding(enc.NUM_SELECT_TASKS + 1, d_kind)  # +1 = "not selecting"
+        self.task_proj = _mlp([d_kind, d_model])
+
         self.player_proj = _mlp([enc.PLAYER_DIM, d_model, d_model])
         self.monster_proj = _mlp([enc.MONSTER_DIM, d_model, d_model])
         self.scalar_proj = _mlp([enc.SCALAR_DIM, d_model])
         self.pile_proj = _mlp([d_card * 3, d_model])
 
-        # [player, scalars, hand_pool, monster_pool, piles, potions] -> h_state
-        self.state_mlp = _mlp([d_model * 6, d_model, d_model])
+        # [player, scalars, hand_pool, monster_pool, piles, potions, relics, task] -> h_state
+        self.state_mlp = _mlp([d_model * 8, d_model, d_model])
 
         # [h_state, kind, item, target] -> logit
         self.kind_embed = nn.Embedding(_NUM_KINDS, d_kind)
@@ -94,10 +104,14 @@ class CombatNet(nn.Module):
                            t["exhaust_pile"] @ W], dim=-1)
         pile_vec = self.pile_proj(piles)
         potion_vec = self.potion_state_proj(t["potions"] @ self.potion_embed.weight)
+        relic_vec = self.relic_proj(t["relics"] @ self.relic_embed.weight)
+        task_id = t["select_task"].long().squeeze(-1).clamp(0, enc.NUM_SELECT_TASKS)
+        task_vec = self.task_proj(self.task_embed(task_id))
         player_vec = self.player_proj(t["player"])
         scalar_vec = self.scalar_proj(t["scalars"])
 
-        h = torch.cat([player_vec, scalar_vec, hand_pool, mon_pool, pile_vec, potion_vec], dim=-1)
+        h = torch.cat([player_vec, scalar_vec, hand_pool, mon_pool, pile_vec, potion_vec,
+                       relic_vec, task_vec], dim=-1)
         return self.state_mlp(h), hand, mon
 
     # ----- batched forward over ragged actions ------------------------------
@@ -168,7 +182,9 @@ class CombatNet(nn.Module):
 
         kind_emb = self.kind_embed(lt(kind_idx))
         feats = torch.cat([h_state[st_t], kind_emb, item, target], dim=-1)
-        logits = self.action_mlp(feats).squeeze(-1)
+        raw = self.action_mlp(feats).squeeze(-1)
+        c = self.logit_scale
+        logits = c * torch.tanh(raw / c)        # bound |logit| <= c so softmax/CE stay finite
         return list(torch.split(logits, A_sizes)), values
 
 
