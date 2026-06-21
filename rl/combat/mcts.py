@@ -55,7 +55,7 @@ class MCTSConfig:
     pw_k: float = 1.0          # progressive widening: max children ~ k * visits^alpha
     pw_alpha: float = 0.5
     temperature: float = 1.0   # move selection from root visit counts (<=1e-3 -> greedy)
-    discount: float = 1.0
+    discount: float = 0.99   # <1 gently rewards closing the fight sooner (vs slow turtling)
     # Per-step HP-loss shaping: each transition earns reward hp_loss_coef*(dHP)/max_hp
     # (negative when the player loses HP, positive on heal). Makes the value a
     # return-to-go so defensive play gets dense, local credit instead of only a smeared
