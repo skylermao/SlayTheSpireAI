@@ -98,7 +98,9 @@ MONSTER_DIM = MONSTER_BASE_DIM + len(MONSTER_STATUSES)
 # 0..195 (INVALID=0) and not exposed to Python, so the size comes from the C++ header
 # (constants/MonsterMoves.h); the net clamps, so a larger enum degrades gracefully.
 NUM_MONSTER_MOVES = 196
-SCALAR_DIM = 5  # turn, is_card_select, can_skip_select, num_potions, num_alive_enemies
+# turn, is_card_select, can_skip_select, num_potions, num_alive_enemies,
+# total_incoming_damage (this turn, post-modifier), unblocked_incoming (incoming - block)
+SCALAR_DIM = 7
 
 _CARD_TYPE_INT = {
     sts.CardType.ATTACK: 0, sts.CardType.SKILL: 1, sts.CardType.POWER: 2,
@@ -193,6 +195,35 @@ SELECT_TASK_NONE = NUM_SELECT_TASKS
 
 def enemy_total_hp(bc) -> int:
     return sum(max(0, mon.cur_hp) for mon in bc.monsters)
+
+
+def monster_incoming_damage(mon, bc) -> int:
+    """Per-hit damage this monster's intent would actually deal to the player, after
+    Strength/Weak/Vulnerable/stance/relic modifiers (0 if not an attack). Falls back to
+    base damage if the modified accessor is unavailable."""
+    try:
+        d = mon.get_move_damage_to_player(bc)   # -1 when the intent is not an attack
+        return max(0, d)
+    except Exception:
+        try:
+            return max(0, mon.get_move_damage(bc).damage)
+        except Exception:
+            return 0
+
+
+def incoming_damage(bc) -> int:
+    """Total damage the player would take next enemy turn from all live attackers,
+    summed as modified per-hit damage x hit count (mirrors the sim's getIncomingDamage)."""
+    total = 0
+    for mon in bc.monsters:
+        if not mon.is_alive() or mon.is_dead_or_escaped() or mon.is_half_dead():
+            continue
+        try:
+            hits = mon.get_move_damage(bc).attack_count
+        except Exception:
+            hits = 1
+        total += monster_incoming_damage(mon, bc) * max(1, hits)
+    return total
 
 
 def card_features(card) -> np.ndarray:
@@ -355,7 +386,9 @@ def encode_observation(bc, relic_vec=None) -> dict:
         obs["monsters"][i, 2] = mon.block / _BLOCK_NORM
         try:
             di = mon.get_move_damage(bc)
-            obs["monsters"][i, 3] = di.damage / _DMG_NORM
+            # Per-hit damage the player would ACTUALLY take (post Strength/Weak/Vulnerable),
+            # not the unmodified base -- the quantity defensive play hinges on.
+            obs["monsters"][i, 3] = monster_incoming_damage(mon, bc) / _DMG_NORM
             obs["monsters"][i, 4] = di.attack_count / 5.0
         except Exception:
             pass
@@ -395,6 +428,12 @@ def encode_observation(bc, relic_vec=None) -> dict:
     obs["scalars"][2] = 1.0 if (selecting and bc.card_select_info.can_pick_zero) else 0.0
     obs["scalars"][3] = bc.potion_count / float(MAX_POTIONS)
     obs["scalars"][4] = bc.monsters.get_alive_count() / float(MAX_ENEMIES)
+    # Aggregate defensive signal: total post-modifier incoming damage this turn, and the
+    # net amount that would get through current block (incoming - block; can be negative
+    # -> over-blocked). Handed to the net precomputed so it need not learn the compare.
+    inc = incoming_damage(bc)
+    obs["scalars"][5] = inc / _DMG_NORM
+    obs["scalars"][6] = (inc - p.block) / _DMG_NORM
 
     if relic_vec is not None:
         obs["relics"] = relic_vec

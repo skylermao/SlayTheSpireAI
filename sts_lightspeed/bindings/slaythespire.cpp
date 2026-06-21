@@ -1098,6 +1098,14 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("get_status", &Monster::getStatusInternal)
         .def("get_move_damage", [](const Monster &m, const BattleContext &bc) {
             return m.getMoveBaseDamage(bc);
+        })
+        // Per-hit damage the player would actually take from this intent: base damage
+        // run through Strength/Weak/Vulnerable/stance/relic modifiers. -1 if not an
+        // attack. (get_move_damage returns only the unmodified base.)
+        .def("get_move_damage_to_player", [](const Monster &m, const BattleContext &bc) {
+            auto di = m.getMoveBaseDamage(bc);
+            if (di.damage <= 0) return -1;
+            return m.calculateDamageToPlayer(bc, di.damage);
         });
 
     // ==================== DamageInfo ====================
