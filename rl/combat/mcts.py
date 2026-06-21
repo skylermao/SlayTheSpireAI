@@ -56,6 +56,11 @@ class MCTSConfig:
     pw_alpha: float = 0.5
     temperature: float = 1.0   # move selection from root visit counts (<=1e-3 -> greedy)
     discount: float = 1.0
+    # Per-step HP-loss shaping: each transition earns reward hp_loss_coef*(dHP)/max_hp
+    # (negative when the player loses HP, positive on heal). Makes the value a
+    # return-to-go so defensive play gets dense, local credit instead of only a smeared
+    # terminal HP signal. 0.0 -> pure terminal value (old behavior).
+    hp_loss_coef: float = 0.5
     win_value_floor: float = 0.2   # win value = floor + (1-floor)*hp_frac
     # Loss value scales with combat difficulty (how much of the entering HP the real
     # player lost): an easy combat punishes a loss fully, a brutal one only mildly.
@@ -174,7 +179,9 @@ class MCTS:
             chance = node.children[a] = ChanceNode()
         child = self._sample_outcome(chance, node.session, node.actions[a])
 
-        v = self.cfg.discount * (yield from self._simulate_gen(child))
+        # Immediate per-step reward for this edge (HP change), then bootstrap the child.
+        r = self._step_reward(node.session, child.session)
+        v = r + self.cfg.discount * (yield from self._simulate_gen(child))
         chance.N += 1
         chance.W += v
         node.N += 1
@@ -258,8 +265,35 @@ class MCTS:
         return le + (lh - le) * difficulty
 
     def _game_value(self, session: CombatSession) -> float:
-        """Self-play value target z for a finished game (neutral 0 if only truncated)."""
+        """Terminal outcome value of a finished game (neutral 0 if only truncated)."""
         return self._terminal_value(session) if session.done else 0.0
+
+    def _step_reward(self, parent: CombatSession, child: CombatSession) -> float:
+        """Per-edge shaping reward: hp_loss_coef * (child HP - parent HP) / max_hp.
+        Negative when the player took damage on this transition, positive on heal."""
+        coef = self.cfg.hp_loss_coef
+        if coef == 0.0:
+            return 0.0
+        mh = parent.cfg.max_hp if parent.cfg else 1
+        ph = max(0, parent.bc.player.cur_hp)
+        ch = max(0, child.bc.player.cur_hp)
+        return coef * (ch - ph) / max(1, mh)
+
+    def shaped_return_targets(self, hps, final_hp, terminal_value, max_hp):
+        """Return-to-go value targets for a self-play game: z_t = r_t + discount*z_{t+1},
+        with the per-step HP reward r_t and z after the last move = terminal_value. Mirrors
+        the MCTS backup so the value head and the search agree. Clamped to [-1, 1] (the
+        tanh value head's range); the discounted recursion uses the unclamped value."""
+        coef, disc = self.cfg.hp_loss_coef, self.cfg.discount
+        mh = max(1, max_hp)
+        z = [0.0] * len(hps)
+        z_next, hp_next = terminal_value, max(0, final_hp)
+        for t in range(len(hps) - 1, -1, -1):
+            r = coef * (hp_next - max(0, hps[t])) / mh
+            zt = r + disc * z_next
+            z[t] = max(-1.0, min(1.0, zt))
+            z_next, hp_next = zt, max(0, hps[t])
+        return z
 
     # ----- move selection ---------------------------------------------------
 

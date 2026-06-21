@@ -43,6 +43,7 @@ def _play_game_gen(mcts: MCTS, session: CombatSession):
     """Generator: play one full combat, yielding leaf-eval requests, recording data."""
     session.reset()
     examples: list[SelfPlayExample] = []
+    hps: list[int] = []                        # player HP at each recorded decision
     while not (session.done or session.truncated):
         action, policy, root = yield from mcts.search_gen(session)
         if action is None:
@@ -54,10 +55,15 @@ def _play_game_gen(mcts: MCTS, session: CombatSession):
             sel_feats=root.session.select_candidate_features(),
             policy=np.asarray(policy, dtype=np.float32),
         ))
+        hps.append(root.session.bc.player.cur_hp)
         session.step(action)
 
-    z = mcts._game_value(session)
-    for ex in examples:
+    # Value targets are return-to-go: per-step HP-loss shaping + terminal outcome.
+    terminal_value = mcts._game_value(session)
+    max_hp = session.cfg.max_hp if session.cfg else 1
+    targets = mcts.shaped_return_targets(hps, session.bc.player.cur_hp,
+                                         terminal_value, max_hp)
+    for ex, z in zip(examples, targets):
         ex.z = z
     return GameResult(examples=examples, outcome=session.outcome, won=session.won,
                       hp=session.bc.player.cur_hp, moves=len(examples))
