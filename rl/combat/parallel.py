@@ -152,8 +152,11 @@ class ParallelTrainer:
             raise ValueError("Provide data_path (fights gzip) and/or a CombatConfig")
         self.max_turns = max_turns
         self.tcfg = train_config or TrainConfig()
-        # Self-play search: explore (root noise + temperature sampling).
-        self.mcfg = replace(mcts_config or MCTSConfig(), temperature=1.0, add_root_noise=True)
+        # Self-play search regime, taken from the config (MCTSConfig defaults already
+        # explore: temperature=1.0, add_root_noise=True). Respecting the config -- rather
+        # than forcing it -- lets temperature / noise be tuned. (Eval builds its own
+        # greedy, no-noise MCTS separately, so it is unaffected.)
+        self.mcfg = mcts_config or MCTSConfig()
         self.pcfg = parallel_config or ParallelConfig()
         self.net_kwargs = net_kwargs or {}
         self.seed = seed
