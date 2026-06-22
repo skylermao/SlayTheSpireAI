@@ -75,7 +75,7 @@ class ParallelConfig:
 
 def _actor_loop(actor_id, fights, config_kw, net_kwargs, mcts_cfg, weights_path,
                 version, example_q, stop_event, base_seed, device,
-                actor_chunk, actor_concurrency):
+                actor_chunk, actor_concurrency, max_turns):
     """One self-play worker: generate games, stream transport examples to the learner."""
     torch.set_num_threads(1)                       # one BLAS thread; parallelism is across procs
     seed = base_seed + actor_id * 100_003
@@ -84,11 +84,11 @@ def _actor_loop(actor_id, fights, config_kw, net_kwargs, mcts_cfg, weights_path,
     if fights is not None:
         sampler = DatasetSampler(fights, rng=rng)
         def make_session():
-            return CombatSession(sampler=sampler)
+            return CombatSession(sampler=sampler, max_turns=max_turns)
     else:
         cfg = CombatConfig(**config_kw)
         def make_session():
-            return CombatSession(config=cfg)
+            return CombatSession(config=cfg, max_turns=max_turns)
 
     net = CombatNet(**net_kwargs)
     evaluator = NeuralEvaluator(net, device=device)
@@ -146,9 +146,11 @@ class ParallelTrainer:
                  parallel_config: Optional[ParallelConfig] = None,
                  net_kwargs: Optional[dict] = None, seed: int = 0,
                  resume_from: Optional[str] = None,
-                 exclude_encounters: Optional[set] = None):
+                 exclude_encounters: Optional[set] = None,
+                 max_turns: int = 60):
         if data_path is None and config is None:
             raise ValueError("Provide data_path (fights gzip) and/or a CombatConfig")
+        self.max_turns = max_turns
         self.tcfg = train_config or TrainConfig()
         # Self-play search: explore (root noise + temperature sampling).
         self.mcfg = replace(mcts_config or MCTSConfig(), temperature=1.0, add_root_noise=True)
@@ -240,7 +242,8 @@ class ParallelTrainer:
                 i, self._fights, self._config_kw, self.net_kwargs, actor_mcfg,
                 self.weights_path, self._version, example_q, stop_event,
                 self.seed + 1, self.pcfg.device,
-                self.pcfg.actor_chunk, self.pcfg.actor_concurrency), daemon=True)
+                self.pcfg.actor_chunk, self.pcfg.actor_concurrency,
+                self.max_turns), daemon=True)
             p.start()
             actors.append(p)
         print(f"[parallel] {self.pcfg.num_actors} actors x {self.pcfg.actor_concurrency} "
