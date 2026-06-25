@@ -98,10 +98,13 @@ def main():
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
-    # TPE sampler; SQLite storage so the study resumes if interrupted.
+    # TPE sampler; SQLite storage so the study resumes if interrupted. n_startup_trials=8
+    # means once the study holds >=8 completed trials, TPE proposes from that history
+    # rather than random-sampling -- so a *resumed* study exploits prior trials instead of
+    # replaying the (re-seeded) random startup sequence.
     study = optuna.create_study(
         direction="maximize",
-        sampler=optuna.samplers.TPESampler(seed=args.seed),
+        sampler=optuna.samplers.TPESampler(seed=args.seed, n_startup_trials=8),
         study_name="combat_hpo",
         storage=f"sqlite:///{os.path.join(args.out, 'study.db')}",
         load_if_exists=True,

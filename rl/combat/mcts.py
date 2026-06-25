@@ -40,6 +40,7 @@ import numpy as np
 
 from .session import CombatSession, LegalAction, SELECT_CARD, SKIP_SELECT
 from . import encoding as enc
+from . import rewards
 
 
 # =============================================================================
@@ -56,11 +57,15 @@ class MCTSConfig:
     pw_alpha: float = 0.5
     temperature: float = 1.0   # move selection from root visit counts (<=1e-3 -> greedy)
     discount: float = 0.99   # <1 gently rewards closing the fight sooner (vs slow turtling)
-    # Per-step HP-loss shaping: each transition earns reward hp_loss_coef*(dHP)/max_hp
-    # (negative when the player loses HP, positive on heal). Makes the value a
-    # return-to-go so defensive play gets dense, local credit instead of only a smeared
-    # terminal HP signal. 0.0 -> pure terminal value (old behavior).
+    # Per-step HP shaping: each transition earns hp_loss_coef * (Phi(end%) - Phi(start%)),
+    # a potential-based reward over HP percentage (see rewards.py). Makes the value a
+    # return-to-go so defense gets dense, local credit instead of only a smeared terminal
+    # HP signal. reward_w tilts toward "losing at low HP is worse" (0 -> pure linear, i.e.
+    # the old behavior); reward_k sharpens that tilt near death. hp_loss_coef scales the
+    # whole shaping term (0.0 -> pure terminal value).
     hp_loss_coef: float = 0.5
+    reward_w: float = 0.25
+    reward_k: float = 3.0
     win_value_floor: float = 0.2   # win value = floor + (1-floor)*hp_frac
     # Loss value scales with combat difficulty (how much of the entering HP the real
     # player lost): an easy combat punishes a loss fully, a brutal one only mildly.
@@ -268,31 +273,37 @@ class MCTS:
         """Terminal outcome value of a finished game (neutral 0 if only truncated)."""
         return self._terminal_value(session) if session.done else 0.0
 
-    def _step_reward(self, parent: CombatSession, child: CombatSession) -> float:
-        """Per-edge shaping reward: hp_loss_coef * (child HP - parent HP) / max_hp.
-        Negative when the player took damage on this transition, positive on heal."""
+    def _hp_shaping(self, start_hp, end_hp, max_hp) -> float:
+        """Potential-based HP shaping for one transition, scaled by hp_loss_coef. HP is
+        mapped to a 0-100 percentage of max_hp before applying Phi (so the near-death tilt
+        keys off HP *fraction*). Shared by the MCTS backup and the self-play targets so
+        they stay consistent."""
         coef = self.cfg.hp_loss_coef
         if coef == 0.0:
             return 0.0
+        mh = max(1, max_hp)
+        x = 100.0 * min(max(start_hp, 0), mh) / mh
+        y = 100.0 * min(max(end_hp, 0), mh) / mh
+        return coef * float(rewards.reward(x, y, self.cfg.reward_w, self.cfg.reward_k))
+
+    def _step_reward(self, parent: CombatSession, child: CombatSession) -> float:
+        """Per-edge shaping reward for the HP change on this transition."""
         mh = parent.cfg.max_hp if parent.cfg else 1
-        ph = max(0, parent.bc.player.cur_hp)
-        ch = max(0, child.bc.player.cur_hp)
-        return coef * (ch - ph) / max(1, mh)
+        return self._hp_shaping(parent.bc.player.cur_hp, child.bc.player.cur_hp, mh)
 
     def shaped_return_targets(self, hps, final_hp, terminal_value, max_hp):
         """Return-to-go value targets for a self-play game: z_t = r_t + discount*z_{t+1},
         with the per-step HP reward r_t and z after the last move = terminal_value. Mirrors
         the MCTS backup so the value head and the search agree. Clamped to [-1, 1] (the
         tanh value head's range); the discounted recursion uses the unclamped value."""
-        coef, disc = self.cfg.hp_loss_coef, self.cfg.discount
-        mh = max(1, max_hp)
+        disc = self.cfg.discount
         z = [0.0] * len(hps)
-        z_next, hp_next = terminal_value, max(0, final_hp)
+        z_next, hp_next = terminal_value, final_hp
         for t in range(len(hps) - 1, -1, -1):
-            r = coef * (hp_next - max(0, hps[t])) / mh
+            r = self._hp_shaping(hps[t], hp_next, max_hp)   # transition hps[t] -> hp_next
             zt = r + disc * z_next
             z[t] = max(-1.0, min(1.0, zt))
-            z_next, hp_next = zt, max(0, hps[t])
+            z_next, hp_next = zt, hps[t]
         return z
 
     # ----- move selection ---------------------------------------------------

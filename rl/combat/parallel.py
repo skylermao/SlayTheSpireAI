@@ -147,6 +147,7 @@ class ParallelTrainer:
                  net_kwargs: Optional[dict] = None, seed: int = 0,
                  resume_from: Optional[str] = None,
                  exclude_encounters: Optional[set] = None,
+                 include_encounters: Optional[set] = None,
                  max_turns: int = 60):
         if data_path is None and config is None:
             raise ValueError("Provide data_path (fights gzip) and/or a CombatConfig")
@@ -167,11 +168,14 @@ class ParallelTrainer:
         learner_sampler = None
         if data_path is not None:
             fights = DatasetSampler.from_gzip(data_path, rng=random.Random(seed)).fights
-            if exclude_encounters:
+            if include_encounters or exclude_encounters:
                 n0 = len(fights)
-                fights = [f for f in fights if f["enemies"] not in exclude_encounters]
-                print(f"[parallel] encounter filter: kept {len(fights):,}/{n0:,} fights "
-                      f"(excluded {n0 - len(fights):,})", flush=True)
+                if include_encounters:
+                    fights = [f for f in fights if f["enemies"] in include_encounters]
+                if exclude_encounters:
+                    fights = [f for f in fights if f["enemies"] not in exclude_encounters]
+                print(f"[parallel] encounter filter: kept {len(fights):,}/{n0:,} fights",
+                      flush=True)
             if self.pcfg.max_fights and len(fights) > self.pcfg.max_fights:
                 fights = random.Random(seed).sample(fights, self.pcfg.max_fights)
             self._fights = fights

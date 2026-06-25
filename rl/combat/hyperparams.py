@@ -47,7 +47,9 @@ class Hyperparams:
     win_value_floor: float = 0.2    # win value = floor + (1-floor)*hp_frac  -> [0.2, 1.0]
     loss_value_easy: float = -1.0   # loss value when the human lost ~no HP (easy fight)
     loss_value_hard: float = -0.3   # loss value when the human nearly died (hard fight)
-    hp_loss_coef: float = 0.5       # per-step HP-loss shaping weight (0 -> terminal-only)
+    hp_loss_coef: float = 0.5       # scale of the per-step HP shaping (0 -> terminal-only)
+    reward_w: float = 0.25          # HP-shaping tilt toward low-HP losses (0 -> pure linear)
+    reward_k: float = 3.0           # sharpness of that near-death tilt
     max_turns: int = 60             # turns before a combat is truncated (z=0, undecided)
 
     # ===================== Optimization (train.TrainConfig) =====================
@@ -95,6 +97,7 @@ class Hyperparams:
             dirichlet_alpha=self.dirichlet_alpha, dirichlet_epsilon=self.dirichlet_epsilon,
             pw_k=self.pw_k, pw_alpha=self.pw_alpha, temperature=self.temperature,
             discount=self.discount, hp_loss_coef=self.hp_loss_coef,
+            reward_w=self.reward_w, reward_k=self.reward_k,
             win_value_floor=self.win_value_floor, loss_value_easy=self.loss_value_easy,
             loss_value_hard=self.loss_value_hard, add_root_noise=self.add_root_noise,
             seed=self.seed)
@@ -144,7 +147,8 @@ class Hyperparams:
             "Exploration (self-play)": ["temperature", "dirichlet_alpha",
                                         "dirichlet_epsilon", "add_root_noise"],
             "Value / reward shaping": ["win_value_floor", "loss_value_easy",
-                                       "loss_value_hard", "hp_loss_coef", "max_turns"],
+                                       "loss_value_hard", "hp_loss_coef", "reward_w",
+                                       "reward_k", "max_turns"],
             "Optimization": ["lr", "weight_decay", "batch_size", "grad_clip",
                              "value_loss_coef", "policy_target_smoothing",
                              "buffer_capacity", "min_buffer"],
