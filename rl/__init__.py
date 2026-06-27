@@ -1,27 +1,14 @@
-"""
-RL module for Slay the Spire training.
+"""Combat RL for Slay the Spire (built on sts_lightspeed).
 
-Phases:
-- neow: Starting bonus selection
-- pathing: Map navigation
-- combat: Battle actions (TBD)
-- card_reward: Post-combat card selection
-- rest_site: Campfire actions
-- event: Event choices
-- shop: Purchase decisions
-- boss_relic: Post-boss relic selection
-- card_select: Sub-phase for multi-step card selections
+Layered packages:
+- core   : sim interface, observation encoding, scenario/dataset (CombatSession, ...)
+- algos  : the learning algorithm (MCTS, CombatNet, self-play, reward)
+- train  : training orchestration + viewers (Trainer, ParallelTrainer, eval, ui)
+- tune   : hyperparameters + HPO (Hyperparams, Optuna study)
+- test   : small scenario/demo scripts
+
+Subpackages are imported lazily (import what you need, e.g. `from rl.core import
+CombatSession`) to keep `import rl` light and free of heavy deps like torch.
 """
 
-from .phases import (
-    NeowPhase,
-    PathingPhase,
-    CombatPhase,
-    CardRewardPhase,
-    RestSitePhase,
-    EventPhase,
-    ShopPhase,
-    BossRelicPhase,
-    CardSelectPhase,
-    CardSelectContext,
-)
+__all__ = ["core", "algos", "train", "tune"]

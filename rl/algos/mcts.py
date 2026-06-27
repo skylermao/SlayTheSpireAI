@@ -38,8 +38,8 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from .session import CombatSession, LegalAction, SELECT_CARD, SKIP_SELECT
-from . import encoding as enc
+from ..core.session import CombatSession, LegalAction, SELECT_CARD, SKIP_SELECT
+from ..core import encoding as enc
 from . import rewards
 
 
@@ -353,7 +353,7 @@ def play_combat(session: CombatSession, mcts: MCTS, verbose: bool = False) -> di
 
 
 if __name__ == "__main__":
-    from .scenario import CombatConfig
+    from ..core.scenario import CombatConfig
 
     cfg = CombatConfig(
         deck=["Strike_R"] * 5 + ["Defend_R"] * 4 + ["Bash"],

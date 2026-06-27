@@ -5,7 +5,7 @@ starting setup (relics/deck/potions/enemy/HP), then per player-turn: HP/block/en
 player & enemy statuses, enemy intent, and each card the agent plays (with target), plus
 what the enemy turn did. Intended for inspection, not training.
 
-    PYTHONPATH=. python -m rl.combat.playthrough --ckpt checkpoints_from_ec2/net_v5_final.pt \
+    PYTHONPATH=. python -m rl.train.playthrough --ckpt weights/net_v7_final.pt \
         --games 2 --sims 128 --normal-only --seed 0
 """
 
@@ -15,11 +15,11 @@ from collections import Counter
 
 import torch
 
-from .scenario import DatasetSampler, NON_NORMAL_ENCOUNTERS
-from .session import CombatSession, PLAY_CARD, USE_POTION, END_TURN, SELECT_CARD, SKIP_SELECT
-from .mcts import MCTS, MCTSConfig
-from .net import CombatNet, NeuralEvaluator
-from . import encoding as enc
+from ..core.scenario import DatasetSampler, NON_NORMAL_ENCOUNTERS
+from ..core.session import CombatSession, PLAY_CARD, USE_POTION, END_TURN, SELECT_CARD, SKIP_SELECT
+from ..algos.mcts import MCTS, MCTSConfig
+from ..algos.net import CombatNet, NeuralEvaluator
+from ..core import encoding as enc
 
 
 def _player_statuses(p):
@@ -212,7 +212,7 @@ def play_one(mcts, sampler, gidx):
 
 def cfg_cards(cfg):
     # fallback: rebuild card list from cfg specs (names only) -- approximate
-    from .scenario import resolve_card
+    from ..core.scenario import resolve_card
     out = []
     for spec in cfg.deck:
         c = resolve_card(spec)

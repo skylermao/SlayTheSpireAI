@@ -16,7 +16,7 @@ from typing import Optional
 
 import numpy as np
 
-from .session import CombatSession, LegalAction
+from ..core.session import CombatSession, LegalAction
 from .mcts import MCTS
 
 
@@ -139,7 +139,7 @@ def collect_selfplay(mcts: MCTS, make_session, n_games: int,
 
 if __name__ == "__main__":
     import torch
-    from .scenario import CombatConfig
+    from ..core.scenario import CombatConfig
     from .mcts import MCTSConfig
     from .net import CombatNet, NeuralEvaluator
 

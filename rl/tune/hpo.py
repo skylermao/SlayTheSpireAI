@@ -6,7 +6,7 @@ eval search budget (so trials are compared at equal eval-time strength, isolatin
 learned net). The objective is winrate + hp_weight*(avg end HP / 80) -- winrate primary,
 HP retained as a secondary signal (rewards the defensive quality we care about).
 
-    PYTHONPATH=. python -m rl.combat.hpo --trials 8 --proxy-steps 30000 \
+    PYTHONPATH=. python -m rl.tune.hpo --trials 8 --proxy-steps 30000 \
         --eval-games 80 --eval-sims 128 --out checkpoints_hpo
 
 Tuned (union of Core RL + Optimization + Exploration):
@@ -26,7 +26,7 @@ import os
 import torch
 
 from .hyperparams import Hyperparams
-from .eval import evaluate
+from ..train.eval import evaluate
 
 HP_NORM = 80.0   # nominal max HP for normalizing the HP-retained term
 

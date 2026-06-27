@@ -6,7 +6,7 @@ gathers all of them into one `Hyperparams` dataclass -- grouped, commented, with
 defaults -- so you can see and tune them in one spot, then build the sub-configs the
 pipeline expects via `.net_kwargs() / .mcts_config() / .train_config() / .parallel_config()`.
 
-    from rl.combat.hyperparams import Hyperparams
+    from rl.tune.hyperparams import Hyperparams
     hp = Hyperparams(num_simulations=256, lr=3e-4)   # override what you want
     hp.describe()                                     # print every value, grouped
     trainer = hp.build_trainer()                      # ParallelTrainer wired from hp
@@ -91,7 +91,7 @@ class Hyperparams:
                     d_potion=self.d_potion, d_move=self.d_move, logit_scale=self.logit_scale)
 
     def mcts_config(self):
-        from .mcts import MCTSConfig
+        from ..algos.mcts import MCTSConfig
         return MCTSConfig(
             num_simulations=self.num_simulations, c_puct=self.c_puct,
             dirichlet_alpha=self.dirichlet_alpha, dirichlet_epsilon=self.dirichlet_epsilon,
@@ -103,7 +103,7 @@ class Hyperparams:
             seed=self.seed)
 
     def train_config(self):
-        from .train import TrainConfig
+        from ..train.train import TrainConfig
         return TrainConfig(
             batch_size=self.batch_size, buffer_capacity=self.buffer_capacity,
             lr=self.lr, weight_decay=self.weight_decay,
@@ -112,7 +112,7 @@ class Hyperparams:
             checkpoint_dir=self.checkpoint_dir, seed=self.seed)
 
     def parallel_config(self):
-        from .parallel import ParallelConfig
+        from ..train.parallel import ParallelConfig
         return ParallelConfig(
             num_actors=self.num_actors, actor_concurrency=self.actor_concurrency,
             actor_chunk=self.actor_chunk, max_fights=self.max_fights,
@@ -125,11 +125,11 @@ class Hyperparams:
     def exclude_encounters(self):
         if not self.normal_only:
             return None
-        from .scenario import NON_NORMAL_ENCOUNTERS
+        from ..core.scenario import NON_NORMAL_ENCOUNTERS
         return NON_NORMAL_ENCOUNTERS
 
     def build_trainer(self, resume_from: Optional[str] = None):
-        from .parallel import ParallelTrainer
+        from ..train.parallel import ParallelTrainer
         return ParallelTrainer(
             data_path=self.data_path, train_config=self.train_config(),
             mcts_config=self.mcts_config(), parallel_config=self.parallel_config(),

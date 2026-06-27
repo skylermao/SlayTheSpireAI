@@ -1,6 +1,6 @@
 """Example training/eval loops over CombatSession.
 
-Run:  python -m rl.combat.example     (from the repo root)
+Run:  python -m rl.test.example     (from the repo root)
 
 Shows the two ways a hand-written algorithm talks to the sim:
   1. on-policy rollout  -- reset / legal_actions / step  (what PPO collects)
@@ -9,8 +9,8 @@ Shows the two ways a hand-written algorithm talks to the sim:
 
 import random
 
-from .session import CombatSession
-from .scenario import CombatConfig
+from ..core.session import CombatSession
+from ..core.scenario import CombatConfig
 
 
 def random_rollout(session: CombatSession, rng: random.Random) -> dict:
@@ -38,7 +38,7 @@ def afterstate_greedy(session: CombatSession) -> dict:
     """
     def value(s: CombatSession) -> float:
         # crude: prefer killing enemies and keeping HP / block.
-        from . import encoding as enc
+        from ..core import encoding as enc
         return (s.bc.player.cur_hp + s.bc.player.block
                 - enc.enemy_total_hp(s.bc) + (1000 if s.won else 0))
 

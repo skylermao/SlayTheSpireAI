@@ -4,7 +4,7 @@ Pick a checkpoint, choose a scenario (random or a specific encounter, optionally
 normal-only), set the search budget, and see a turn-by-turn transcript of the greedy
 agent. Stdlib only (no Flask) -- run it and open the printed URL.
 
-    PYTHONPATH=. python -m rl.combat.ui            # then open http://localhost:8000
+    PYTHONPATH=. python -m rl.train.ui            # then open http://localhost:8000
 
 The dataset (~1.8M fights) and each net are loaded once and cached in-process.
 """
@@ -18,10 +18,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import torch
 
-from .scenario import DatasetSampler, CombatConfig, NON_NORMAL_ENCOUNTERS
-from .session import CombatSession
-from .mcts import MCTS, MCTSConfig
-from .net import CombatNet, NeuralEvaluator
+from ..core.scenario import DatasetSampler, CombatConfig, NON_NORMAL_ENCOUNTERS
+from ..core.session import CombatSession
+from ..algos.mcts import MCTS, MCTSConfig
+from ..algos.net import CombatNet, NeuralEvaluator
 from .playthrough import play_structured
 
 _LOCK = threading.Lock()      # MCTS/torch are single-threaded here; serialize requests

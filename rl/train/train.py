@@ -20,11 +20,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .session import CombatSession
-from .scenario import CombatConfig, DatasetSampler
-from .mcts import MCTS, MCTSConfig
-from .net import CombatNet, NeuralEvaluator
-from .selfplay import collect_selfplay, SelfPlayExample
+from ..core.session import CombatSession
+from ..core.scenario import CombatConfig, DatasetSampler
+from ..algos.mcts import MCTS, MCTSConfig
+from ..algos.net import CombatNet, NeuralEvaluator
+from ..algos.selfplay import collect_selfplay, SelfPlayExample
 
 
 @dataclass

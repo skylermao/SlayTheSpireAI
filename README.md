@@ -52,21 +52,34 @@ Fixed-shape tensors (~974 floats) plus per-action features:
 
 ```
 sts_rl/
-├── rl/combat/              # the RL agent (Python)
-│   ├── _sts.py             # single import point for the compiled sim
-│   ├── scenario.py         # CombatConfig, DatasetSampler, name→enum resolvers,
-│   │                       #   potion sampling, encounter difficulty tiers
-│   ├── encoding.py         # BattleContext → observation tensors
-│   ├── session.py          # CombatSession: the interface to one live combat
-│   ├── mcts.py             # AlphaZero MCTS over CombatSession
-│   ├── net.py              # CombatNet + NeuralEvaluator
-│   ├── selfplay.py         # concurrent self-play (batched leaf eval)
-│   ├── train.py            # single-process Trainer
-│   ├── parallel.py         # multiprocessing actor–learner ParallelTrainer
-│   └── eval.py             # greedy (no-exploration) winrate evaluation
+├── rl/                     # the RL agent (Python), layered into packages
+│   ├── core/               # environment: sim interface, encoding, scenario/dataset
+│   │   ├── _sts.py         #   single import point for the compiled sim
+│   │   ├── scenario.py     #   CombatConfig, DatasetSampler, resolvers, encounter tiers
+│   │   ├── encoding.py     #   BattleContext → observation tensors
+│   │   └── session.py      #   CombatSession: the interface to one live combat
+│   ├── algos/              # the learning algorithm
+│   │   ├── mcts.py         #   AlphaZero MCTS over CombatSession
+│   │   ├── net.py          #   CombatNet + NeuralEvaluator
+│   │   ├── selfplay.py     #   concurrent self-play (batched leaf eval)
+│   │   └── rewards.py      #   potential-based HP shaping reward
+│   ├── train/              # training orchestration + viewers
+│   │   ├── train.py        #   single-process Trainer
+│   │   ├── parallel.py     #   multiprocessing actor–learner ParallelTrainer
+│   │   ├── eval.py         #   greedy (no-exploration) winrate evaluation
+│   │   ├── playthrough.py  #   turn-by-turn transcript
+│   │   ├── ui.py           #   localhost web viewer
+│   │   └── run_*.py        #   training launch scripts
+│   ├── tune/               # hyperparameters + HPO
+│   │   ├── hyperparams.py  #   consolidated Hyperparams config
+│   │   └── hpo.py          #   Optuna study over short proxy runs
+│   └── test/               # small scenario/demo scripts
+├── weights/                # keeper trained models (gitignored)
 ├── sts_lightspeed/         # C++ simulator + pybind11 bindings (vendored)
 └── data/                   # extracted per-combat training data (gitignored)
 ```
+
+Layering is acyclic: `core` ← `algos` ← `train` ← `tune`.
 
 ## Setup
 
@@ -82,7 +95,7 @@ make -j$(nproc)        # produces slaythespire.<py>.so
 pip install torch numpy        # CPU wheel is fine; the net is small
 
 # 3. sanity check
-cd ../.. && PYTHONPATH=. python -c "import rl.combat as c; print('ok')"
+cd ../.. && PYTHONPATH=. python -c "from rl.core.session import CombatSession; print('ok')"
 ```
 
 Build `Release` — the simulator speed dominates self-play throughput.
@@ -93,38 +106,43 @@ Self-play is CPU-bound and parallelizes across processes. `ParallelTrainer` runs
 processes generating games and one learner process training + broadcasting weights.
 
 ```python
-from rl.combat.parallel import ParallelTrainer, ParallelConfig
-from rl.combat.train import TrainConfig
-from rl.combat.mcts import MCTSConfig
-from rl.combat.scenario import NON_NORMAL_ENCOUNTERS
+from rl.tune.hyperparams import Hyperparams
 
-ParallelTrainer(
-    data_path="data/ironclad_a0_fights.json.gz",
-    train_config=TrainConfig(checkpoint_dir="checkpoints"),
-    mcts_config=MCTSConfig(num_simulations=128),
-    parallel_config=ParallelConfig(num_actors=30, tensorboard=True),
-    net_kwargs={"d_model": 128},
-    exclude_encounters=NON_NORMAL_ENCOUNTERS,   # optional: skip elites/bosses
-).run()
+# All knobs live in one place; build_trainer() wires net + MCTS + train + parallel.
+Hyperparams(
+    num_simulations=128, num_actors=30, total_steps=200_000,
+    normal_only=True,                 # skip elites/bosses
+    checkpoint_dir="checkpoints", tensorboard=True,
+).build_trainer().run()
 ```
+
+`ParallelTrainer` (in `rl.train.parallel`) can also be constructed directly if you prefer
+to pass `TrainConfig`/`MCTSConfig`/`ParallelConfig` yourself.
 
 - **Data**: `data/ironclad_a0_fights.json.gz` — ~1.8M per-combat snapshots from Ironclad
   A0 winning runs (deck, relics, enemy, entering HP). Potions are sampled per combat
   (80% none / 15% one / 5% two) since the data has none.
 - **TensorBoard**: scalars (loss, winrate, throughput) under `<checkpoint_dir>/tb`.
-- **Resume**: `ParallelTrainer(..., resume_from="checkpoints/net_step40000.pt")`.
+- **Resume**: `Hyperparams(...).build_trainer(resume_from="checkpoints/net_step40000.pt")`.
 
-Single-process training (no multiprocessing) is also available via `train.Trainer`.
+Single-process training (no multiprocessing) is also available via `rl.train.train.Trainer`.
 
 ## Evaluation
 
-`eval.py` reports the **greedy** winrate (no exploration noise) — the agent's true
+`rl.train.eval` reports the **greedy** winrate (no exploration noise) — the agent's true
 strength, which is higher than the self-play number reported during training.
 
 ```bash
-PYTHONPATH=. python -m rl.combat.eval \
-    --ckpt checkpoints/net_final.pt --games 300 --sims 128
+PYTHONPATH=. python -m rl.train.eval \
+    --ckpt weights/net_v7_final.pt --games 300 --sims 128 --normal-only
 ```
+
+Other entry points: `python -m rl.train.playthrough --ckpt weights/net_v7_final.pt`
+(turn-by-turn transcript), `python -m rl.train.ui` (localhost viewer),
+`python -m rl.tune.hpo` (HPO study), `python -m rl.tune.hyperparams` (print all knobs).
+
+Trained models live in `weights/`: `net_v7_final.pt` (best normal, 95% greedy),
+`net_hpo_best_trial17.pt` (HPO winner), `net_elite_final.pt` (elite specialist).
 
 ## Notes
 

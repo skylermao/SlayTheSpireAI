@@ -5,7 +5,7 @@ root noise + temperature sampling). This plays dataset combats with GREEDY MCTS
 (temperature=0, no root noise) -- the agent's actual playing strength -- and reports
 winrate with a 95% confidence interval, average end HP, and average game length.
 
-    python -m rl.combat.eval --ckpt checkpoints_v2/net_final.pt \
+    python -m rl.train.eval --ckpt weights/net_v7_final.pt \
         --data data/ironclad_a0_fights.json.gz --games 300 --sims 128
 
 The checkpoint must match the current network architecture (LayerNorm + bounded logits).
@@ -18,11 +18,11 @@ import time
 import numpy as np
 import torch
 
-from .scenario import DatasetSampler
-from .session import CombatSession
-from .mcts import MCTS, MCTSConfig
-from .net import CombatNet, NeuralEvaluator
-from .selfplay import collect_selfplay
+from ..core.scenario import DatasetSampler
+from ..core.session import CombatSession
+from ..algos.mcts import MCTS, MCTSConfig
+from ..algos.net import CombatNet, NeuralEvaluator
+from ..algos.selfplay import collect_selfplay
 
 
 def evaluate(ckpt: str, data_path: str, n_games: int = 300, sims: int = 128,
@@ -76,10 +76,10 @@ def main():
 
     exclude = include = None
     if args.normal_only:
-        from .scenario import NON_NORMAL_ENCOUNTERS
+        from ..core.scenario import NON_NORMAL_ENCOUNTERS
         exclude = NON_NORMAL_ENCOUNTERS
     if args.elites_only:
-        from .scenario import ELITE_ENCOUNTERS
+        from ..core.scenario import ELITE_ENCOUNTERS
         include = ELITE_ENCOUNTERS
 
     torch.set_num_threads(1)                        # so parallel shards don't oversubscribe

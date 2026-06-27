@@ -33,11 +33,11 @@ from typing import Optional
 
 import torch
 
-from .selfplay import SelfPlayExample, collect_selfplay
-from .session import CombatSession
-from .scenario import DatasetSampler, CombatConfig
-from .mcts import MCTS, MCTSConfig
-from .net import CombatNet, NeuralEvaluator
+from ..algos.selfplay import SelfPlayExample, collect_selfplay
+from ..core.session import CombatSession
+from ..core.scenario import DatasetSampler, CombatConfig
+from ..algos.mcts import MCTS, MCTSConfig
+from ..algos.net import CombatNet, NeuralEvaluator
 from .train import Trainer, TrainConfig
 
 

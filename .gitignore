@@ -6,3 +6,13 @@ __pycache__/
 *.pyc
 .DS_Store
 sts_lightspeed/build/
+
+# trained models, training outputs, datasets (large binaries)
+weights/
+checkpoints*/
+runs/
+data/
+
+# secrets / stray run data
+*.pem
+/2018-*.json

@@ -25,11 +25,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .session import (
+from ..core.session import (
     CombatSession, LegalAction,
     END_TURN, PLAY_CARD, USE_POTION, SELECT_CARD, SKIP_SELECT,
 )
-from . import encoding as enc
+from ..core import encoding as enc
 
 _KIND_IDX = {END_TURN: 0, PLAY_CARD: 1, USE_POTION: 2, SELECT_CARD: 3, SKIP_SELECT: 4}
 _NUM_KINDS = len(_KIND_IDX)
