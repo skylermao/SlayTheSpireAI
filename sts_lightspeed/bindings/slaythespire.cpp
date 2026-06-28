@@ -1240,15 +1240,36 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("drink_potion", &BattleContext::drinkPotion, pybind::arg("idx"), pybind::arg("target") = 0)
         .def("discard_potion", &BattleContext::discardPotion)
         .def("is_card_play_allowed", &BattleContext::isCardPlayAllowed)
-        // Actual damage a hand card would deal to a target (base damage from the card
-        // table run through Strength/Vigor/Weak/stance/relics + the target's Vulnerable).
-        // -1 if the card is not an attack. Static-base attacks are exact; state-scaling
-        // cards (Heavy Blade, Body Slam, Perfected Strike, ...) use the static base.
+        // Total damage a hand card would deal to a target: per-hit base run through
+        // Strength/Vigor/Weak/stance/relics + the target's Vulnerable, times the hit count.
+        // -1 if not an attack. Per-card bases that scale with state (Body Slam = block,
+        // Heavy Blade = +Strength, Perfected Strike = +Strikes, Searing Blow / Rampage /
+        // Ritual Dagger, Mind Blast) and multi-hit counts (Twin Strike, Pummel, Sword
+        // Boomerang, Whirlwind) mirror playCardImpl exactly; everything else uses the
+        // static base table. (Vigor is added inside calculateCardDamage, so bases here
+        // must NOT pre-add it -- matching the single-target attack path.) Remaining
+        // hand-dependent exceptions: Fiend Fire / Second Wind (per-exhaust).
         .def("get_card_damage", [](const BattleContext &bc, int handIdx, int targetIdx) {
-            const auto &card = bc.cards.hand[handIdx];
-            const int base = getBaseDamage(card.getId(), card.isUpgraded());
+            const auto &c = bc.cards.hand[handIdx];
+            const bool up = c.isUpgraded();
+            const auto &p = bc.player;
+            int base, hits = 1;
+            switch (c.getId()) {
+                case CardId::BODY_SLAM:        base = p.block; break;
+                case CardId::HEAVY_BLADE:      base = 14 + (up ? 4 : 2) * p.strength; break;
+                case CardId::PERFECTED_STRIKE: base = 6 + bc.cards.strikeCount * (up ? 3 : 2); break;
+                case CardId::SEARING_BLOW: { int n = c.getUpgradeCount(); base = n * (n + 7) / 2 + 12; break; }
+                case CardId::RAMPAGE:          base = 8 + c.specialData; break;
+                case CardId::RITUAL_DAGGER:    base = c.specialData; break;
+                case CardId::MIND_BLAST:       base = static_cast<int>(bc.cards.drawPile.size()); break;
+                case CardId::TWIN_STRIKE:      base = up ? 7 : 5; hits = 2; break;
+                case CardId::PUMMEL:           base = 2; hits = up ? 5 : 4; break;
+                case CardId::SWORD_BOOMERANG:  base = 3; hits = up ? 4 : 3; break;
+                case CardId::WHIRLWIND:        base = up ? 8 : 5; hits = p.energy; break;
+                default:                       base = getBaseDamage(c.getId(), up); break;
+            }
             if (base < 0) return -1;
-            return bc.calculateCardDamage(card, targetIdx, base);
+            return hits * bc.calculateCardDamage(c, targetIdx, base);
         }, pybind::arg("hand_idx"), pybind::arg("target_idx"))
         // Block a given base block resolves to (Dexterity/Frail/No-Block applied). The
         // base block per card has no sim table, so the caller supplies it.
