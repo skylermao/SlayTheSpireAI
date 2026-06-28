@@ -44,9 +44,8 @@ class Hyperparams:
     add_root_noise: bool = True     # root exploration noise on (off automatically for eval)
 
     # ===================== Value target / reward shaping (mcts.MCTSConfig) =====================
-    win_value_floor: float = 0.2    # win value = floor + (1-floor)*hp_frac  -> [0.2, 1.0]
-    loss_value_easy: float = -1.0   # loss value when the human lost ~no HP (easy fight)
-    loss_value_hard: float = -0.3   # loss value when the human nearly died (hard fight)
+    win_value_floor: float = 0.4    # win value = floor + (1-floor)*hp_frac  -> [0.4, 1.0]
+    loss_value: float = -1.0        # flat loss penalty (not difficulty-scaled)
     hp_loss_coef: float = 0.5       # scale of the per-step HP shaping (0 -> terminal-only)
     reward_w: float = 0.25          # HP-shaping tilt toward low-HP losses (0 -> pure linear)
     reward_k: float = 3.0           # sharpness of that near-death tilt
@@ -98,8 +97,8 @@ class Hyperparams:
             pw_k=self.pw_k, pw_alpha=self.pw_alpha, temperature=self.temperature,
             discount=self.discount, hp_loss_coef=self.hp_loss_coef,
             reward_w=self.reward_w, reward_k=self.reward_k,
-            win_value_floor=self.win_value_floor, loss_value_easy=self.loss_value_easy,
-            loss_value_hard=self.loss_value_hard, add_root_noise=self.add_root_noise,
+            win_value_floor=self.win_value_floor, loss_value=self.loss_value,
+            add_root_noise=self.add_root_noise,
             seed=self.seed)
 
     def train_config(self):
@@ -146,9 +145,8 @@ class Hyperparams:
             "MCTS search": ["num_simulations", "c_puct", "pw_k", "pw_alpha", "discount"],
             "Exploration (self-play)": ["temperature", "dirichlet_alpha",
                                         "dirichlet_epsilon", "add_root_noise"],
-            "Value / reward shaping": ["win_value_floor", "loss_value_easy",
-                                       "loss_value_hard", "hp_loss_coef", "reward_w",
-                                       "reward_k", "max_turns"],
+            "Value / reward shaping": ["win_value_floor", "loss_value", "hp_loss_coef",
+                                       "reward_w", "reward_k", "max_turns"],
             "Optimization": ["lr", "weight_decay", "batch_size", "grad_clip",
                              "value_loss_coef", "policy_target_smoothing",
                              "buffer_capacity", "min_buffer"],
