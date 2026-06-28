@@ -205,6 +205,14 @@ class DatasetSampler:
     default mappability is checked lazily -- `sample()` resamples until it hits a fight
     whose deck/relics/enemy all resolve -- instead of filtering the whole list up front.
     Pass `require_mappable=True` to eagerly filter (slow, but yields a clean fixed set).
+
+    NOTE on lost fights: this data is extracted from *winning* runs, so the human survived
+    every combat -- there is no lost (fatal) fight to exclude here. (And `damage_taken` is
+    GROSS damage taken pre-block, not net HP lost, so it can exceed entering HP on a hard
+    fight the player blocked through and won -- it is not a death signal. ~10% of fights,
+    clustered at the boss floors, look "fatal" by HP alone but were won.) Dropping the
+    final lost fight only applies when extracting from all runs (incl. losses) -- that
+    belongs in the run->fight extraction step using the run's victory flag, not here.
     """
 
     def __init__(self, fights: list[dict], rng: Optional[random.Random] = None,
