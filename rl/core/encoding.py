@@ -102,8 +102,12 @@ MONSTER_DIM = MONSTER_BASE_DIM + len(MONSTER_STATUSES)
 # (constants/MonsterMoves.h); the net clamps, so a larger enum degrades gracefully.
 NUM_MONSTER_MOVES = 196
 # turn, is_card_select, can_skip_select, num_potions, num_alive_enemies,
-# total_incoming_damage (this turn, post-modifier), unblocked_incoming (incoming - block)
-SCALAR_DIM = 7
+# total_incoming_damage (this turn, post-modifier), unblocked_incoming (incoming - block),
+# hand_attack_potential (sum of calc damage in hand vs the weakest enemy),
+# hand_block_potential (sum of calc block in hand). The last two summarize the agent's
+# offensive/defensive capacity this turn so the *value* head sees it (the per-card/
+# per-action damage & block features otherwise only reach the policy head / pooled state).
+SCALAR_DIM = 9
 
 _CARD_TYPE_INT = {
     sts.CardType.ATTACK: 0, sts.CardType.SKILL: 1, sts.CardType.POWER: 2,
@@ -292,6 +296,34 @@ def card_features(card, bc=None) -> np.ndarray:
         card.special_data / _DMG_NORM,
         card_calculated_block(card, bc) / _DMG_NORM,
     ], dtype=np.float32)
+
+
+def hand_potential(bc):
+    """(total_attack_damage, total_block) the current hand could produce this turn -- the
+    sum of each attack card's calculated damage (vs the weakest alive enemy) and each
+    card's calculated block. Energy-unconstrained upper bounds; the net contextualizes
+    with energy. Aggregated here so the *value* head (which sees only the pooled state)
+    gets the agent's offensive/defensive capacity, not just incoming damage."""
+    # weakest alive, targetable enemy -> the one burst damage would most likely finish
+    target = -1
+    best_hp = None
+    for mon in bc.monsters:
+        if mon.is_alive() and mon.is_targetable():
+            hp = max(0, mon.cur_hp)
+            if best_hp is None or hp < best_hp:
+                best_hp, target = hp, mon.idx
+    atk = blk = 0
+    for i in range(bc.cards.cards_in_hand):
+        card = bc.cards.hand[i]
+        blk += card_calculated_block(card, bc)
+        if target >= 0:
+            try:
+                d = bc.get_card_damage(i, target)
+                if d > 0:
+                    atk += d
+            except Exception:
+                pass
+    return atk, blk
 
 
 def select_candidate_cards(bc, select_actions) -> list:
@@ -489,6 +521,11 @@ def encode_observation(bc, relic_vec=None) -> dict:
     inc = incoming_damage(bc)
     obs["scalars"][5] = inc / _DMG_NORM
     obs["scalars"][6] = (inc - p.block) / _DMG_NORM
+    # Aggregate offensive/defensive capacity in hand (feeds the value head via h_state):
+    # total damage all hand attacks would deal to the weakest enemy, and total block.
+    atk, blk = hand_potential(bc)
+    obs["scalars"][7] = atk / _DMG_NORM
+    obs["scalars"][8] = blk / _DMG_NORM
 
     if relic_vec is not None:
         obs["relics"] = relic_vec
