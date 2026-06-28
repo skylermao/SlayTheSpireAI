@@ -211,12 +211,13 @@ class DatasetSampler:
     the final lost fight only applies when extracting from all runs (incl. losses) and
     should use the run's `victory` flag, not an HP heuristic.
 
-    `damage_taken` is net HP lost in the fight (post-block) -- verified against the all-runs
-    `current_hp_per_floor`: end-of-floor HP = entering - damage_taken + Burning Blood's
-    +6 heal (capped at max). It is NOT a reliable death signal here because ~10% of fights
-    (clustered at the boss floors) have damage_taken >= the recorded `entering_hp` yet were
-    won -- i.e. this extraction's `entering_hp` is unreliable for some boss/elite records,
-    so don't filter on damage_taken >= entering_hp.
+    `damage_taken` is HP damage absorbed during the fight (post-block) -- it equals net HP
+    lost when there's no mid-fight healing (verified vs the all-runs current_hp_per_floor:
+    end-of-floor HP = entering - damage_taken + Burning Blood's +6, capped at max). It is
+    NOT a death signal: ~10% of fights have damage_taken >= entering_hp yet were WON,
+    because HP was restored mid-fight -- mostly lifesteal/heal cards (Reaper/Feed, enriched
+    68% vs 50% in such runs), occasionally a revive (Lizard Tail/Fairy in a Bottle). So
+    never infer death from damage_taken >= entering_hp.
     """
 
     def __init__(self, fights: list[dict], rng: Optional[random.Random] = None,
