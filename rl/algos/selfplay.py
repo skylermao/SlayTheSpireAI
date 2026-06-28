@@ -58,11 +58,12 @@ def _play_game_gen(mcts: MCTS, session: CombatSession):
         hps.append(root.session.bc.player.cur_hp)
         session.step(action)
 
-    # Value targets are return-to-go: per-step HP-loss shaping + terminal outcome.
+    # Value targets are return-to-go: strict-PBRS HP shaping + terminal outcome. A won/lost
+    # game ends in a true terminal (Phi=0); a truncated game ends non-terminally.
     terminal_value = mcts._game_value(session)
     max_hp = session.cfg.max_hp if session.cfg else 1
     targets = mcts.shaped_return_targets(hps, session.bc.player.cur_hp,
-                                         terminal_value, max_hp)
+                                         terminal_value, max_hp, final_done=session.done)
     for ex, z in zip(examples, targets):
         ex.z = z
     return GameResult(examples=examples, outcome=session.outcome, won=session.won,

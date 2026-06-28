@@ -57,12 +57,12 @@ class MCTSConfig:
     pw_alpha: float = 0.5
     temperature: float = 1.0   # move selection from root visit counts (<=1e-3 -> greedy)
     discount: float = 0.99   # <1 gently rewards closing the fight sooner (vs slow turtling)
-    # Per-step HP shaping: each transition earns hp_loss_coef * (Phi(end%) - Phi(start%)),
-    # a potential-based reward over HP percentage (see rewards.py). Makes the value a
-    # return-to-go so defense gets dense, local credit instead of only a smeared terminal
-    # HP signal. reward_w tilts toward "losing at low HP is worse" (0 -> pure linear, i.e.
-    # the old behavior); reward_k sharpens that tilt near death. hp_loss_coef scales the
-    # whole shaping term (0.0 -> pure terminal value).
+    # Strict potential-based HP shaping (Ng et al. 1999): each transition s->s' earns
+    # hp_loss_coef * (discount*Phi(s') - Phi(s)) with Phi(terminal)=0, where Phi is over HP
+    # percentage (see rewards.py). This telescopes to a constant per episode, so it
+    # provably leaves the optimal policy unchanged -- it only densifies the signal for
+    # credit assignment. reward_w tilts toward "losing at low HP is worse"; reward_k
+    # sharpens that tilt near death. hp_loss_coef scales the shaping (0.0 -> no shaping).
     hp_loss_coef: float = 0.5
     reward_w: float = 0.25
     reward_k: float = 3.0
@@ -273,34 +273,47 @@ class MCTS:
         """Terminal outcome value of a finished game (neutral 0 if only truncated)."""
         return self._terminal_value(session) if session.done else 0.0
 
-    def _hp_shaping(self, start_hp, end_hp, max_hp) -> float:
-        """Potential-based HP shaping for one transition, scaled by hp_loss_coef. HP is
-        mapped to a 0-100 percentage of max_hp before applying Phi (so the near-death tilt
-        keys off HP *fraction*). Shared by the MCTS backup and the self-play targets so
-        they stay consistent."""
+    def _potential(self, hp, max_hp) -> float:
+        """Phi(s): the shaping potential at a state, a function of HP fraction (mapped to
+        a 0-100 percentage so the near-death tilt keys off fraction, not absolute HP)."""
+        mh = max(1, max_hp)
+        h = 100.0 * min(max(hp, 0), mh) / mh
+        return float(rewards.potential(h, self.cfg.reward_w, self.cfg.reward_k))
+
+    def _hp_shaping(self, start_hp, end_hp, max_hp, end_terminal: bool) -> float:
+        """Strict potential-based shaping for one transition s -> s':
+            F = hp_loss_coef * (discount * Phi(s') - Phi(s)),   Phi(terminal) = 0.
+        With these two conditions the shaping telescopes over an episode to a constant
+        (-coef*Phi(s0)), so it provably leaves the optimal policy unchanged -- it only
+        densifies the learning signal. The terminal outcome (win/loss) is the separate
+        true reward. Shared by the MCTS backup and the self-play targets for consistency."""
         coef = self.cfg.hp_loss_coef
         if coef == 0.0:
             return 0.0
-        mh = max(1, max_hp)
-        x = 100.0 * min(max(start_hp, 0), mh) / mh
-        y = 100.0 * min(max(end_hp, 0), mh) / mh
-        return coef * float(rewards.reward(x, y, self.cfg.reward_w, self.cfg.reward_k))
+        phi_start = self._potential(start_hp, max_hp)
+        phi_end = 0.0 if end_terminal else self._potential(end_hp, max_hp)   # Phi(terminal)=0
+        return coef * (self.cfg.discount * phi_end - phi_start)
 
     def _step_reward(self, parent: CombatSession, child: CombatSession) -> float:
-        """Per-edge shaping reward for the HP change on this transition."""
+        """Per-edge shaping reward for this transition (child.done -> Phi(child)=0)."""
         mh = parent.cfg.max_hp if parent.cfg else 1
-        return self._hp_shaping(parent.bc.player.cur_hp, child.bc.player.cur_hp, mh)
+        return self._hp_shaping(parent.bc.player.cur_hp, child.bc.player.cur_hp, mh,
+                                end_terminal=child.done)
 
-    def shaped_return_targets(self, hps, final_hp, terminal_value, max_hp):
+    def shaped_return_targets(self, hps, final_hp, terminal_value, max_hp, final_done=True):
         """Return-to-go value targets for a self-play game: z_t = r_t + discount*z_{t+1},
-        with the per-step HP reward r_t and z after the last move = terminal_value. Mirrors
-        the MCTS backup so the value head and the search agree. Clamped to [-1, 1] (the
-        tanh value head's range); the discounted recursion uses the unclamped value."""
+        with the strict-PBRS per-step reward r_t and z after the last move = terminal_value.
+        Only the last transition lands in a true terminal state (Phi=0) when `final_done`;
+        a truncated game ends non-terminally (uses Phi(final_hp)). Mirrors the MCTS backup so
+        the value head and the search agree. Clamped to [-1, 1] (the tanh value head's
+        range); the discounted recursion uses the unclamped value."""
         disc = self.cfg.discount
         z = [0.0] * len(hps)
         z_next, hp_next = terminal_value, final_hp
-        for t in range(len(hps) - 1, -1, -1):
-            r = self._hp_shaping(hps[t], hp_next, max_hp)   # transition hps[t] -> hp_next
+        last = len(hps) - 1
+        for t in range(last, -1, -1):
+            end_terminal = (t == last) and final_done   # only the final edge hits a terminal
+            r = self._hp_shaping(hps[t], hp_next, max_hp, end_terminal=end_terminal)
             zt = r + disc * z_next
             z[t] = max(-1.0, min(1.0, zt))
             z_next, hp_next = zt, hps[t]

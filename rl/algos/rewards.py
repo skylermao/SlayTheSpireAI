@@ -17,6 +17,13 @@ Because it is a difference of a potential, it satisfies (all verified in tests):
 Notes: HP is clamped to [0, 100]. Any death penalty must be a *separate* terminal reward
 -- folding it in here would break telescoping. Scale the whole output by a constant when
 combining with larger-magnitude rewards.
+
+Usage downstream (mcts.py): the trainer uses STRICT potential-based shaping in the sense of
+Ng, Harada & Russell (1999): the per-transition shaping is `coef * (gamma*Phi(s') - Phi(s))`
+with `Phi(terminal) = 0`, built from `potential()` here. With the gamma factor and the zero
+terminal potential it telescopes to a constant per episode, so it provably does not change
+the optimal policy. `reward()` below (Phi(y) - Phi(x), no gamma) is the undiscounted
+single-transition value, kept as a reference / for analysis and tests.
 """
 
 import numpy as np
