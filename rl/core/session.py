@@ -61,6 +61,7 @@ class LegalAction:
     card_id: int = -1      # raw CardId int (true identity), else -1
     card_index: int = -1   # dense embedding index (matches obs card features), else -1
     potion_id: int = -1    # raw Potion int for USE_POTION actions, else -1
+    calc_damage: int = -1  # actual damage a PLAY_CARD would deal to its target, else -1
     label: str = ""        # human-readable, for render/logging
 
     def __repr__(self) -> str:
@@ -337,12 +338,14 @@ class CombatSession:
                         if a.is_valid(bc):
                             out.append(LegalAction(PLAY_CARD, a, source_idx=i, target_idx=t,
                                                    card_id=cid, card_index=cidx,
+                                                   calc_damage=self._card_damage(i, t),
                                                    label=f"play {name} -> {mon.get_name()}"))
                 else:
                     a = sts.Action(sts.ActionType.CARD, i, 0)
                     if a.is_valid(bc):
                         out.append(LegalAction(PLAY_CARD, a, source_idx=i,
                                                card_id=cid, card_index=cidx,
+                                               calc_damage=self._card_damage(i, 0),
                                                label=f"play {name}"))
 
             for p in range(min(bc.potion_capacity, enc.MAX_POTIONS)):
@@ -381,6 +384,15 @@ class CombatSession:
                                        label="skip select"))
 
         return out
+
+    def _card_damage(self, hand_idx: int, target_idx: int) -> int:
+        """Actual damage the hand card would deal to `target_idx` (post all modifiers,
+        incl. the target's Vulnerable); -1 for non-attacks. Per-action feature for the
+        policy head -- damage is target-dependent so it can't be a card feature."""
+        try:
+            return int(self.bc.get_card_damage(hand_idx, target_idx))
+        except Exception:
+            return -1
 
     def _potion_status(self, p: int):
         """(playable, needs_target) for potion slot p, by probing sim validity."""

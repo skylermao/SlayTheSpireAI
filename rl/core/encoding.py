@@ -38,11 +38,14 @@ NUM_POTIONS = max(int(p) for p in sts.Potion.__members__.values()) + 1  # potion
 # are featurized on demand via `select_candidate_features()`.
 
 # Per-card feature layout (hand and select candidates share it).
-CARD_FEATURES = 8
+CARD_FEATURES = 9
 # [0]=card index (dense, for embedding) [1]=cost_for_turn [2]=upgraded [3]=ethereal
 # [4]=exhausts [5]=requires_target [6]=type_int [7]=special_data (normalized)
 #   special_data: Searing Blow upgrade level / Rampage & Ritual Dagger bonus damage /
 #   Genetic Algorithm block; 0 for every other card.
+# [8]=calculated block this card would grant (Dexterity/Frail applied), normalized; 0 for
+#   non-block cards. (Calculated *damage* is target-dependent, so it is a per-action
+#   feature in the policy head, not a card feature -- see session.LegalAction.calc_damage.)
 
 # Normalizers (keep observation roughly in [-2, 2]); raw card ids are left unscaled
 # because they are meant to index a learned embedding table.
@@ -226,7 +229,43 @@ def incoming_damage(bc) -> int:
     return total
 
 
-def card_features(card) -> np.ndarray:
+# Base block (unupgraded, upgraded) for the static-block Ironclad/colorless cards. The sim
+# has no base-block table (block bases are inline in playCardImpl), so we list the ones in
+# our card set. Cards absent here grant no on-play block (-> 0). State-dependent block
+# cards (Entrench = 2x current block, Second Wind = per-exhaust, Metallicize = end-of-turn
+# power) are intentionally omitted -- a static base would be wrong, so they read 0 and the
+# net learns them from the card id + state, as before.
+def _build_base_block():
+    names = {
+        "DEFEND_RED": (5, 8), "IRON_WAVE": (5, 7), "SHRUG_IT_OFF": (8, 11),
+        "GHOSTLY_ARMOR": (10, 13), "FLAME_BARRIER": (12, 16), "TRUE_GRIT": (7, 9),
+        "POWER_THROUGH": (15, 15), "IMPERVIOUS": (30, 40), "SENTINEL": (5, 8),
+    }
+    out = {}
+    for name, vals in names.items():
+        cid = getattr(sts.CardId, name, None)
+        if cid is not None:
+            out[int(cid)] = vals
+    return out
+
+
+_CARD_BASE_BLOCK = _build_base_block()
+
+
+def card_calculated_block(card, bc) -> int:
+    """Actual block this card would grant right now (Dexterity/Frail applied via the sim),
+    0 for non-block cards. Needs the live `bc` for the modifiers."""
+    base = _CARD_BASE_BLOCK.get(int(card.id))
+    if base is None or bc is None:
+        return 0
+    b = base[1] if card.upgraded else base[0]
+    try:
+        return int(bc.calculate_card_block(b))
+    except Exception:
+        return 0
+
+
+def card_features(card, bc=None) -> np.ndarray:
     return np.array([
         float(index_for_card_id(int(card.id))),
         float(card.cost_for_turn),
@@ -236,6 +275,7 @@ def card_features(card) -> np.ndarray:
         1.0 if card.requires_target else 0.0,
         float(_CARD_TYPE_INT.get(card.type, 5)),
         card.special_data / _DMG_NORM,
+        card_calculated_block(card, bc) / _DMG_NORM,
     ], dtype=np.float32)
 
 
@@ -321,7 +361,7 @@ def select_candidate_features(bc, select_actions) -> np.ndarray:
     feats = np.zeros((len(cands), CARD_FEATURES), np.float32)
     for k, card in enumerate(cands):
         if card is not None:
-            feats[k] = card_features(card)
+            feats[k] = card_features(card, bc)
     return feats
 
 
@@ -338,7 +378,7 @@ def encode_observation(bc, relic_vec=None) -> dict:
     for i, card in enumerate(bc.cards.hand):
         if i >= MAX_HAND:
             break
-        obs["hand_cards"][i] = card_features(card)
+        obs["hand_cards"][i] = card_features(card, bc)
         obs["hand_mask"][i] = 1
 
     # Piles as card-id counts

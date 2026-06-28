@@ -42,12 +42,14 @@ from .train import Trainer, TrainConfig
 
 
 # A picklable stand-in for a LegalAction carrying exactly what forward_batch consumes.
-ActionRef = namedtuple("ActionRef", ["kind", "source_idx", "target_idx", "potion_id"])
+ActionRef = namedtuple("ActionRef", ["kind", "source_idx", "target_idx", "potion_id",
+                                     "calc_damage"])
 
 
 def _to_transport(ex: SelfPlayExample) -> SelfPlayExample:
     """Strip the un-picklable C++ Action from an example so it can cross to the learner."""
-    acts = [ActionRef(a.kind, a.source_idx, a.target_idx, a.potion_id) for a in ex.actions]
+    acts = [ActionRef(a.kind, a.source_idx, a.target_idx, a.potion_id, a.calc_damage)
+            for a in ex.actions]
     return SelfPlayExample(obs=ex.obs, actions=acts, sel_feats=ex.sel_feats,
                            policy=ex.policy, z=ex.z)
 

@@ -1240,6 +1240,21 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("drink_potion", &BattleContext::drinkPotion, pybind::arg("idx"), pybind::arg("target") = 0)
         .def("discard_potion", &BattleContext::discardPotion)
         .def("is_card_play_allowed", &BattleContext::isCardPlayAllowed)
+        // Actual damage a hand card would deal to a target (base damage from the card
+        // table run through Strength/Vigor/Weak/stance/relics + the target's Vulnerable).
+        // -1 if the card is not an attack. Static-base attacks are exact; state-scaling
+        // cards (Heavy Blade, Body Slam, Perfected Strike, ...) use the static base.
+        .def("get_card_damage", [](const BattleContext &bc, int handIdx, int targetIdx) {
+            const auto &card = bc.cards.hand[handIdx];
+            const int base = getBaseDamage(card.getId(), card.isUpgraded());
+            if (base < 0) return -1;
+            return bc.calculateCardDamage(card, targetIdx, base);
+        }, pybind::arg("hand_idx"), pybind::arg("target_idx"))
+        // Block a given base block resolves to (Dexterity/Frail/No-Block applied). The
+        // base block per card has no sim table, so the caller supplies it.
+        .def("calculate_card_block", [](const BattleContext &bc, int baseBlock) {
+            return bc.calculateCardBlock(baseBlock);
+        }, pybind::arg("base_block"))
         // Card select actions
         .def("choose_armaments_card", &BattleContext::chooseArmamentsCard)
         .def("choose_codex_card", &BattleContext::chooseCodexCard)

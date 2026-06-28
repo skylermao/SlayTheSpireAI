@@ -76,9 +76,9 @@ class CombatNet(nn.Module):
         # [player, scalars, hand_pool, monster_pool, piles, potions, relics, task] -> h_state
         self.state_mlp = _mlp([d_model * 8, d_model, d_model])
 
-        # [h_state, kind, item, target] -> logit
+        # [h_state, kind, item, target, calc_damage] -> logit  (+1 = per-action damage scalar)
         self.kind_embed = nn.Embedding(_NUM_KINDS, d_kind)
-        self.action_mlp = _mlp([d_model + d_kind + d_model + d_model, d_model, 1])
+        self.action_mlp = _mlp([d_model + d_kind + d_model + d_model + 1, d_model, 1])
 
         self.value_mlp = _mlp([d_model, d_model, 1])
 
@@ -145,12 +145,14 @@ class CombatNet(nn.Module):
         play_pos, play_st, play_src = [], [], []
         sel_pos, sel_glob = [], []
         pot_pos, pot_ids = [], []
+        dmg_vals = []   # per-action calculated damage (normalized; 0 for non-attacks)
         pos = 0
         for b, acts in enumerate(actions_batch):
             A_sizes.append(len(acts))
             sel_k = 0
             for a in acts:
                 st_idx.append(b); kind_idx.append(_KIND_IDX[a.kind]); tgt_idx.append(a.target_idx)
+                dmg_vals.append(max(0, a.calc_damage) / enc._DMG_NORM)
                 if a.kind == PLAY_CARD:
                     play_pos.append(pos); play_st.append(b); play_src.append(a.source_idx)
                 elif a.kind == SELECT_CARD:
@@ -184,7 +186,8 @@ class CombatNet(nn.Module):
             target[has_t] = mon_enc[st_t[has_t], tgt_t[has_t]]
 
         kind_emb = self.kind_embed(lt(kind_idx))
-        feats = torch.cat([h_state[st_t], kind_emb, item, target], dim=-1)
+        dmg = torch.tensor(dmg_vals, dtype=torch.float32, device=device).unsqueeze(-1)
+        feats = torch.cat([h_state[st_t], kind_emb, item, target, dmg], dim=-1)
         raw = self.action_mlp(feats).squeeze(-1)
         c = self.logit_scale
         logits = c * torch.tanh(raw / c)        # bound |logit| <= c so softmax/CE stay finite
