@@ -253,18 +253,24 @@ _CARD_BASE_BLOCK = _build_base_block()
 
 
 _ENTRENCH_ID = int(getattr(sts.CardId, "ENTRENCH", -1))
+_SECOND_WIND_ID = int(getattr(sts.CardId, "SECOND_WIND", -1))
 
 
 def card_calculated_block(card, bc) -> int:
     """Actual block this card would grant right now (Dexterity/Frail applied via the sim),
-    0 for non-block cards. Needs the live `bc` for the modifiers. Entrench is dynamic (it
-    doubles current block) so it returns current block. Remaining exception: Second Wind
-    (block per non-attack card exhausted) is hand-dependent -> 0."""
+    0 for non-block cards. Needs the live `bc` for the modifiers. Dynamic block cards are
+    resolved against the current state: Entrench doubles current block; Second Wind grants
+    block-per-card for each non-Attack card it would exhaust (the rest of the hand)."""
     if bc is None:
         return 0
-    if int(card.id) == _ENTRENCH_ID:
+    cid = int(card.id)
+    if cid == _ENTRENCH_ID:
         return max(0, bc.player.block)        # doubles current block
-    base = _CARD_BASE_BLOCK.get(int(card.id))
+    if cid == _SECOND_WIND_ID:
+        per = int(bc.calculate_card_block(7 if card.upgraded else 5))
+        non_attack = sum(1 for h in bc.cards.hand if h.type != sts.CardType.ATTACK)
+        return per * max(0, non_attack - 1)   # exclude this Second Wind (it leaves hand)
+    base = _CARD_BASE_BLOCK.get(cid)
     if base is None:
         return 0
     b = base[1] if card.upgraded else base[0]

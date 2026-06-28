@@ -1245,10 +1245,10 @@ PYBIND11_MODULE(slaythespire, m) {
         // -1 if not an attack. Per-card bases that scale with state (Body Slam = block,
         // Heavy Blade = +Strength, Perfected Strike = +Strikes, Searing Blow / Rampage /
         // Ritual Dagger, Mind Blast) and multi-hit counts (Twin Strike, Pummel, Sword
-        // Boomerang, Whirlwind) mirror playCardImpl exactly; everything else uses the
-        // static base table. (Vigor is added inside calculateCardDamage, so bases here
-        // must NOT pre-add it -- matching the single-target attack path.) Remaining
-        // hand-dependent exceptions: Fiend Fire / Second Wind (per-exhaust).
+        // Boomerang, Whirlwind, Fiend Fire = hand size) mirror playCardImpl exactly;
+        // everything else uses the static base table. (Vigor is added inside
+        // calculateCardDamage, so bases here must NOT pre-add it -- matching the
+        // single-target attack path.)
         .def("get_card_damage", [](const BattleContext &bc, int handIdx, int targetIdx) {
             const auto &c = bc.cards.hand[handIdx];
             const bool up = c.isUpgraded();
@@ -1266,6 +1266,10 @@ PYBIND11_MODULE(slaythespire, m) {
                 case CardId::PUMMEL:           base = 2; hits = up ? 5 : 4; break;
                 case CardId::SWORD_BOOMERANG:  base = 3; hits = up ? 4 : 3; break;
                 case CardId::WHIRLWIND:        base = up ? 8 : 5; hits = p.energy; break;
+                // Fiend Fire exhausts the rest of the hand, one hit per card exhausted ->
+                // hits = current hand size minus this card. Deterministic from the hand.
+                case CardId::FIEND_FIRE:       base = up ? 10 : 7;
+                                               hits = std::max(0, bc.cards.cardsInHand - 1); break;
                 default:                       base = getBaseDamage(c.getId(), up); break;
             }
             if (base < 0) return -1;
